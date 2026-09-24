@@ -1,0 +1,43 @@
+{
+  "name": "csdn-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for CSDN — let any AI agent publish, query and manage your blog posts.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "csdn-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "csdn",
+    "blog",
+    "publisher",
+    "ai",
+    "claude",
+    "cursor"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "marked": "^18.0.12",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.2",
+    "typescript": "^5.8.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Leaderxin/csdn-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Leaderxin/csdn-mcp/issues"
+  },
+  "homepage": "https://github.com/Leaderxin/csdn-mcp#readme"
+}
