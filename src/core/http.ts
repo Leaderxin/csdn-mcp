@@ -105,7 +105,7 @@ const RATE_LIMIT_HINTS = ['频繁', '稍后', 'too many', 'rate limit', '请慢�
 
 function looksRateLimited(message: string): boolean {
   const lowered = message.toLowerCase()
-  return RATE_LIMIT_HINTS.some((hint) => lowered.includes(hint.toLowerCase()))
+  return RATE_LIMIT_HINTS.some(hint => lowered.includes(hint.toLowerCase()))
 }
 
 /** Truncate a body snippet so a huge HTML error page cannot flood a log line. */
@@ -206,7 +206,8 @@ export class CsdnHttpClient {
 
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (attempt > 0) {
-        const delay = lastError?.code === 'RATE_LIMITED' ? this.config.saveIntervalMs : backoffDelay(attempt - 1)
+        const delay =
+          lastError?.code === 'RATE_LIMITED' ? this.config.saveIntervalMs : backoffDelay(attempt - 1)
         this.logger.debug('retrying request', { path: options.path, attempt, delay })
         await this.sleep(delay)
       }

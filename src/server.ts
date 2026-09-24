@@ -8,6 +8,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { createContext, type ServerContext } from './context.js'
 import { registerTools } from './tools/index.js'
 
@@ -17,6 +18,17 @@ export const SERVER_VERSION = '1.0.0'
 export interface CreateServerOptions {
   /** Pre-built context. Defaults to one assembled from the environment. */
   context?: ServerContext
+  /**
+   * Transport to connect. Defaults to stdio, which is what an MCP host spawns.
+   *
+   * Injectable purely so the real `startStdioServer` path can be driven in a
+   * test. Without the seam, covering it would mean connecting a genuine
+   * `StdioServerTransport` to the test runner's own stdin/stdout — which would
+   * write protocol frames into the reporter's output and corrupt the run. The
+   * seam is the same trade the rest of the suite makes: fake the I/O boundary,
+   * exercise all of the logic.
+   */
+  transport?: Transport
 }
 
 export interface BuiltServer {
@@ -40,7 +52,7 @@ export function createServer(options: CreateServerOptions = {}): BuiltServer {
  */
 export async function startStdioServer(options: CreateServerOptions = {}): Promise<BuiltServer> {
   const built = createServer(options)
-  const transport = new StdioServerTransport()
+  const transport = options.transport ?? new StdioServerTransport()
   await built.server.connect(transport)
   return built
 }

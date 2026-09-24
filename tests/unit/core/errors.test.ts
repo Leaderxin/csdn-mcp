@@ -32,7 +32,7 @@ describe('CsdnError', () => {
   })
 
   it('reports the four transient codes as retryable (guards against an empty RETRYABLE set)', () => {
-    expect(ALL_CODES.filter((code) => new CsdnError(code, 'x').retryable)).toEqual([
+    expect(ALL_CODES.filter(code => new CsdnError(code, 'x').retryable)).toEqual([
       'NETWORK',
       'TIMEOUT',
       'RATE_LIMITED',

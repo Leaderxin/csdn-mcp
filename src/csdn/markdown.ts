@@ -216,7 +216,7 @@ export function findImagePlaceholders(markdown: string): string[] {
  */
 export function substituteImagePlaceholders(markdown: string, images: Record<string, string>): string {
   const placeholders = findImagePlaceholders(markdown)
-  const missing = placeholders.filter((placeholder) => images[placeholder] === undefined)
+  const missing = placeholders.filter(placeholder => images[placeholder] === undefined)
   if (missing.length > 0) {
     throw new CsdnError('INVALID_ARGUMENT', `以下图片占位符没有对应的上传结果：${missing.join(', ')}`, {
       detail: `missing=${missing.join(',')}`

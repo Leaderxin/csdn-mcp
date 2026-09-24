@@ -39,19 +39,19 @@ npm run build
 
 11 个工具，全部走 stdio。参数、返回结构、错误码的完整定义见 [docs/TOOLS.md](docs/TOOLS.md)。
 
-| 工具 | 说明 |
-|---|---|
-| `auth_login` | 运行期设置 Cookie，随后所有请求立即生效，无需重启进程 |
-| `auth_status` | 检查当前 Cookie 是否已配置、格式是否合法、账号名是什么 |
+| 工具              | 说明                                                            |
+| ----------------- | --------------------------------------------------------------- |
+| `auth_login`      | 运行期设置 Cookie，随后所有请求立即生效，无需重启进程           |
+| `auth_status`     | 检查当前 Cookie 是否已配置、格式是否合法、账号名是什么          |
 | `publish_article` | 新建文章；`mode` 默认 `draft`，发布必须显式传 `mode: "publish"` |
-| `update_article` | 更新已有文章；改标题/标签/摘要/封面 + 草稿副本 |
-| `get_article` | 按 ID 读取单篇文章，可选是否带正文 |
-| `list_articles` | 列出**已公开**文章（分页）；草稿不在其中 |
-| `delete_article` | 删除文章，默认进回收站，`permanent: true` 彻底删除 |
-| `upload_image` | 上传本地图片，返回公网 URL，分 `cover` / `body` 两条通道 |
-| `list_categories` | 列出文章分类；接口不可用时回退到内置列表 |
-| `list_tags` | 列出常用标签；接口不可用时回退到内置列表 |
-| `verify_article` | 回查 API 状态 + 公开页 HTTP 码，确认文章真实状态 |
+| `update_article`  | 更新已有文章；改标题/标签/摘要/封面 + 草稿副本                  |
+| `get_article`     | 按 ID 读取单篇文章，可选是否带正文                              |
+| `list_articles`   | 列出**已公开**文章（分页）；草稿不在其中                        |
+| `delete_article`  | 删除文章，默认进回收站，`permanent: true` 彻底删除              |
+| `upload_image`    | 上传本地图片，返回公网 URL，分 `cover` / `body` 两条通道        |
+| `list_categories` | 列出文章分类；接口不可用时回退到内置列表                        |
+| `list_tags`       | 列出常用标签；接口不可用时回退到内置列表                        |
+| `verify_article`  | 回查 API 状态 + 公开页 HTTP 码，确认文章真实状态                |
 
 ## 一次真实的 Agent 调用流程
 
@@ -93,21 +93,21 @@ Agent → verify_article({ "article_id": "149234567", "expected": "publish" })
 
 完整说明（含"什么时候需要改"）见 [docs/CONFIGURATION.md](docs/CONFIGURATION.md)。
 
-| 变量 | 默认值 | 作用 |
-|---|---|---|
-| `CSDN_COOKIE` | `""` | 认证凭据。所有写操作的必填项 |
-| `CSDN_USERNAME` | `""` | Cookie 里没有 `UserName` 时使用 |
-| `CSDN_LOG_LEVEL` | `warn` | `silent` / `error` / `warn` / `info` / `debug`，日志走 stderr |
-| `CSDN_TIMEOUT_MS` | `20000` | 单次请求超时 |
-| `CSDN_MAX_RETRIES` | `2` | 可重试失败的额外尝试次数 |
-| `CSDN_MIN_INTERVAL_MS` | `250` | 普通请求之间的最小间隔 |
-| `CSDN_SAVE_INTERVAL_MS` | `11000` | 写操作之间的最小间隔（CSDN 约 10s 内会拒绝） |
-| `CSDN_API_BASE` | `https://bizapi.csdn.net` | bizapi 网关地址 |
-| `CSDN_BLOG_BASE` | `https://blog.csdn.net` | 公开页地址，用于写后校验 |
-| `CSDN_COMMUNITY_BASE` | `https://blog.csdn.net` | 社区列表接口地址 |
-| `CSDN_USER_AGENT` | Chrome 131 UA | 请求头 `User-Agent` |
-| `CSDN_APP_KEY` | `203803574` | bizapi 网关 app key（公开常量） |
-| `CSDN_APP_SECRET` | `9znpamsyl2c7cdrr9sas0le9vbc3r6ba` | bizapi 网关签名密钥 |
+| 变量                    | 默认值                             | 作用                                                          |
+| ----------------------- | ---------------------------------- | ------------------------------------------------------------- |
+| `CSDN_COOKIE`           | `""`                               | 认证凭据。所有写操作的必填项                                  |
+| `CSDN_USERNAME`         | `""`                               | Cookie 里没有 `UserName` 时使用                               |
+| `CSDN_LOG_LEVEL`        | `warn`                             | `silent` / `error` / `warn` / `info` / `debug`，日志走 stderr |
+| `CSDN_TIMEOUT_MS`       | `20000`                            | 单次请求超时                                                  |
+| `CSDN_MAX_RETRIES`      | `2`                                | 可重试失败的额外尝试次数                                      |
+| `CSDN_MIN_INTERVAL_MS`  | `250`                              | 普通请求之间的最小间隔                                        |
+| `CSDN_SAVE_INTERVAL_MS` | `11000`                            | 写操作之间的最小间隔（CSDN 约 10s 内会拒绝）                  |
+| `CSDN_API_BASE`         | `https://bizapi.csdn.net`          | bizapi 网关地址                                               |
+| `CSDN_BLOG_BASE`        | `https://blog.csdn.net`            | 公开页地址，用于写后校验                                      |
+| `CSDN_COMMUNITY_BASE`   | `https://blog.csdn.net`            | 社区列表接口地址                                              |
+| `CSDN_USER_AGENT`       | Chrome 131 UA                      | 请求头 `User-Agent`                                           |
+| `CSDN_APP_KEY`          | `203803574`                        | bizapi 网关 app key（公开常量）                               |
+| `CSDN_APP_SECRET`       | `9znpamsyl2c7cdrr9sas0le9vbc3r6ba` | bizapi 网关签名密钥                                           |
 
 ## 它是怎么工作的
 
@@ -131,18 +131,18 @@ Agent → verify_article({ "article_id": "149234567", "expected": "publish" })
 
 ## 文档
 
-| 文档 | 内容 |
-|---|---|
-| [docs/README.md](docs/README.md) | 文档索引 |
-| [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) | 从零到第一次成功调用 |
-| [docs/TOOLS.md](docs/TOOLS.md) | 11 个工具的参数、返回、错误码 |
-| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | 环境变量 + 各客户端配置 |
-| [docs/API-NOTES.md](docs/API-NOTES.md) | 逆向记录：签名串、saveArticle 字段、状态码 |
-| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 按症状排查 |
-| [docs/FAQ.md](docs/FAQ.md) | 常见问题与能力边界 |
-| [docs/CHANGELOG.md](docs/CHANGELOG.md) | 版本变更 |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 分层、模块边界、冻结的工具面 |
-| [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md) | v0.1.0 基线问题清单 |
+| 文档                                               | 内容                                       |
+| -------------------------------------------------- | ------------------------------------------ |
+| [docs/README.md](docs/README.md)                   | 文档索引                                   |
+| [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) | 从零到第一次成功调用                       |
+| [docs/TOOLS.md](docs/TOOLS.md)                     | 11 个工具的参数、返回、错误码              |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md)     | 环境变量 + 各客户端配置                    |
+| [docs/API-NOTES.md](docs/API-NOTES.md)             | 逆向记录：签名串、saveArticle 字段、状态码 |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 按症状排查                                 |
+| [docs/FAQ.md](docs/FAQ.md)                         | 常见问题与能力边界                         |
+| [docs/CHANGELOG.md](docs/CHANGELOG.md)             | 版本变更                                   |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)       | 分层、模块边界、冻结的工具面               |
+| [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md)       | v0.1.0 基线问题清单                        |
 
 ## 许可
 

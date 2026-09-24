@@ -37,7 +37,7 @@ describe('createLogger level filtering', () => {
       logger.info('i')
       logger.debug('d')
 
-      expect(lines.map((line) => line.split(' ')[1])).toEqual(EMITTED_AT[level])
+      expect(lines.map(line => line.split(' ')[1])).toEqual(EMITTED_AT[level])
     })
   }
 
@@ -237,7 +237,7 @@ describe('default sink', () => {
     createLogger({ level: 'error' }).error('hello')
 
     expect(stderrWrite).toHaveBeenCalledWith('[csdn-mcp] ERROR hello\n')
-    expect(stdoutWrite.mock.calls.map((call) => String(call[0]))).not.toContain('[csdn-mcp] ERROR hello\n')
+    expect(stdoutWrite.mock.calls.map(call => String(call[0]))).not.toContain('[csdn-mcp] ERROR hello\n')
 
     stderrWrite.mockRestore()
     stdoutWrite.mockRestore()

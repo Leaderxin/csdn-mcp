@@ -98,7 +98,13 @@ describe('sign', () => {
 
   it('signs the GET form to a hardcoded value too, so the accept/contentType defaults stay pinned', () => {
     expect(
-      sign({ method: 'GET', uri: CATEGORY_PATH, nonce: NONCE, appKey: CSDN_APP_KEY, appSecret: CSDN_APP_SECRET })
+      sign({
+        method: 'GET',
+        uri: CATEGORY_PATH,
+        nonce: NONCE,
+        appKey: CSDN_APP_KEY,
+        appSecret: CSDN_APP_SECRET
+      })
     ).toBe(SIG_GET_CATEGORY)
   })
 
@@ -121,26 +127,53 @@ describe('sign', () => {
 
 describe('buildSignHeaders', () => {
   it('sends the literal X-Ca-Signature-Headers value the gateway folds into the signature', () => {
-    const headers = buildSignHeaders({ method: 'GET', path: CATEGORY_PATH, appKey: CSDN_APP_KEY, appSecret: CSDN_APP_SECRET, nonce: 'n-1' })
+    const headers = buildSignHeaders({
+      method: 'GET',
+      path: CATEGORY_PATH,
+      appKey: CSDN_APP_KEY,
+      appSecret: CSDN_APP_SECRET,
+      nonce: 'n-1'
+    })
     expect(headers['X-Ca-Signature-Headers']).toBe('x-ca-key,x-ca-nonce')
     expect(SIGNATURE_HEADERS).toBe('x-ca-key,x-ca-nonce')
   })
 
   it('echoes the nonce in X-Ca-Nonce, because the gateway re-signs with the header value', () => {
-    const headers = buildSignHeaders({ method: 'GET', path: CATEGORY_PATH, appKey: CSDN_APP_KEY, appSecret: CSDN_APP_SECRET, nonce: 'n-1' })
+    const headers = buildSignHeaders({
+      method: 'GET',
+      path: CATEGORY_PATH,
+      appKey: CSDN_APP_KEY,
+      appSecret: CSDN_APP_SECRET,
+      nonce: 'n-1'
+    })
     expect(headers['X-Ca-Nonce']).toBe('n-1')
     expect(headers.nonce).toBe('n-1')
   })
 
   it('generates a random UUID nonce when none is injected, so no two calls share one', () => {
-    const first = buildSignHeaders({ method: 'GET', path: CATEGORY_PATH, appKey: CSDN_APP_KEY, appSecret: CSDN_APP_SECRET })
-    const second = buildSignHeaders({ method: 'GET', path: CATEGORY_PATH, appKey: CSDN_APP_KEY, appSecret: CSDN_APP_SECRET })
+    const first = buildSignHeaders({
+      method: 'GET',
+      path: CATEGORY_PATH,
+      appKey: CSDN_APP_KEY,
+      appSecret: CSDN_APP_SECRET
+    })
+    const second = buildSignHeaders({
+      method: 'GET',
+      path: CATEGORY_PATH,
+      appKey: CSDN_APP_KEY,
+      appSecret: CSDN_APP_SECRET
+    })
     expect(first['X-Ca-Nonce']).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
     expect(first['X-Ca-Nonce']).not.toBe(second['X-Ca-Nonce'])
   })
 
   it('signs with the generated nonce, so the header and the signature cannot disagree', () => {
-    const headers = buildSignHeaders({ method: 'GET', path: CATEGORY_PATH, appKey: CSDN_APP_KEY, appSecret: CSDN_APP_SECRET })
+    const headers = buildSignHeaders({
+      method: 'GET',
+      path: CATEGORY_PATH,
+      appKey: CSDN_APP_KEY,
+      appSecret: CSDN_APP_SECRET
+    })
     const expected = sign({
       method: 'GET',
       uri: CATEGORY_PATH,
@@ -154,14 +187,26 @@ describe('buildSignHeaders', () => {
   })
 
   it('echoes the app key in X-Ca-Key and X-Ca-Key only', () => {
-    const headers = buildSignHeaders({ method: 'GET', path: CATEGORY_PATH, appKey: 'app-key-1', appSecret: CSDN_APP_SECRET, nonce: 'n-1' })
+    const headers = buildSignHeaders({
+      method: 'GET',
+      path: CATEGORY_PATH,
+      appKey: 'app-key-1',
+      appSecret: CSDN_APP_SECRET,
+      nonce: 'n-1'
+    })
     expect(headers['X-Ca-Key']).toBe('app-key-1')
     expect(headers['X-Ca-Key']).not.toBe(CSDN_APP_KEY)
   })
 
   it('defaults X-Ca-Timestamp to Date.now() in milliseconds as a string', () => {
     const before = Date.now()
-    const headers = buildSignHeaders({ method: 'GET', path: CATEGORY_PATH, appKey: CSDN_APP_KEY, appSecret: CSDN_APP_SECRET, nonce: 'n-1' })
+    const headers = buildSignHeaders({
+      method: 'GET',
+      path: CATEGORY_PATH,
+      appKey: CSDN_APP_KEY,
+      appSecret: CSDN_APP_SECRET,
+      nonce: 'n-1'
+    })
     const timestamp = Number(headers['X-Ca-Timestamp'])
     expect(headers['X-Ca-Timestamp']).toMatch(/^\d+$/)
     expect(timestamp).toBeGreaterThanOrEqual(before)
@@ -169,7 +214,14 @@ describe('buildSignHeaders', () => {
   })
 
   it('accepts an injected timestamp so tests and replays are deterministic', () => {
-    const headers = buildSignHeaders({ method: 'GET', path: CATEGORY_PATH, appKey: CSDN_APP_KEY, appSecret: CSDN_APP_SECRET, nonce: 'n-1', timestamp: 1_700_000_000_000 })
+    const headers = buildSignHeaders({
+      method: 'GET',
+      path: CATEGORY_PATH,
+      appKey: CSDN_APP_KEY,
+      appSecret: CSDN_APP_SECRET,
+      nonce: 'n-1',
+      timestamp: 1_700_000_000_000
+    })
     expect(headers['X-Ca-Timestamp']).toBe('1700000000000')
   })
 
@@ -188,12 +240,25 @@ describe('buildSignHeaders', () => {
   })
 
   it('signs the bare path when there is no query, since a stray "?" also yields 401', () => {
-    const headers = buildSignHeaders({ method: 'GET', path: CATEGORY_PATH, appKey: CSDN_APP_KEY, appSecret: CSDN_APP_SECRET, nonce: 'n-1' })
+    const headers = buildSignHeaders({
+      method: 'GET',
+      path: CATEGORY_PATH,
+      appKey: CSDN_APP_KEY,
+      appSecret: CSDN_APP_SECRET,
+      nonce: 'n-1'
+    })
     expect(headers.uri).toBe(CATEGORY_PATH)
   })
 
   it('treats an empty query string as no query, so an empty filter cannot add a "?"', () => {
-    const headers = buildSignHeaders({ method: 'GET', path: CATEGORY_PATH, query: '', appKey: CSDN_APP_KEY, appSecret: CSDN_APP_SECRET, nonce: 'n-1' })
+    const headers = buildSignHeaders({
+      method: 'GET',
+      path: CATEGORY_PATH,
+      query: '',
+      appKey: CSDN_APP_KEY,
+      appSecret: CSDN_APP_SECRET,
+      nonce: 'n-1'
+    })
     expect(headers.uri).toBe(CATEGORY_PATH)
   })
 
@@ -240,8 +305,21 @@ describe('buildSignHeaders', () => {
   })
 
   it('uses a non-empty contentType when given, since bizapi re-signs the body type too', () => {
-    const withType = buildSignHeaders({ method: 'POST', path: SAVE_PATH, contentType: 'text/plain', appKey: CSDN_APP_KEY, appSecret: CSDN_APP_SECRET, nonce: 'n-1' })
-    const withoutType = buildSignHeaders({ method: 'POST', path: SAVE_PATH, appKey: CSDN_APP_KEY, appSecret: CSDN_APP_SECRET, nonce: 'n-1' })
+    const withType = buildSignHeaders({
+      method: 'POST',
+      path: SAVE_PATH,
+      contentType: 'text/plain',
+      appKey: CSDN_APP_KEY,
+      appSecret: CSDN_APP_SECRET,
+      nonce: 'n-1'
+    })
+    const withoutType = buildSignHeaders({
+      method: 'POST',
+      path: SAVE_PATH,
+      appKey: CSDN_APP_KEY,
+      appSecret: CSDN_APP_SECRET,
+      nonce: 'n-1'
+    })
     expect(withType['X-Ca-Signature']).not.toBe(withoutType['X-Ca-Signature'])
   })
 })

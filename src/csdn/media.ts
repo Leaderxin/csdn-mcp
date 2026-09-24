@@ -70,10 +70,11 @@ export function resolveMimeType(fileName: string): string {
  * through the body channel does not appear as the article cover, and a cover
  * uploaded through the body channel is not used as the cover either.
  */
-const UPLOAD_CHANNELS: Readonly<Record<ImageKind, { appName: string; imageTemplate: string }>> = Object.freeze({
-  body: { appName: 'direct_blog', imageTemplate: 'standard' },
-  cover: { appName: 'direct_blog_coverimage', imageTemplate: '' }
-})
+const UPLOAD_CHANNELS: Readonly<Record<ImageKind, { appName: string; imageTemplate: string }>> =
+  Object.freeze({
+    body: { appName: 'direct_blog', imageTemplate: 'standard' },
+    cover: { appName: 'direct_blog_coverimage', imageTemplate: '' }
+  })
 
 const SIGNATURE_PATH = '/resource-api/v1/image/direct/upload/signature'
 
@@ -136,7 +137,7 @@ function isBlank(value: unknown): boolean {
 
 /** Validate the credential and return it narrowed to a complete object. */
 function assertSignature(data: SignatureResponse): UploadSignatureData {
-  const missing = REQUIRED_SIGNATURE_FIELDS.filter((field) => isBlank(data[field]))
+  const missing = REQUIRED_SIGNATURE_FIELDS.filter(field => isBlank(data[field]))
   if (missing.length > 0) {
     throw new CsdnError('MALFORMED_RESPONSE', `上传签名响应缺少必需字段：${missing.join(', ')}`, {
       detail: `missing=${missing.join(',')}`

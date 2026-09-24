@@ -72,7 +72,10 @@ describe('core barrel', () => {
     expect(typeof limiter.acquire).toBe('function')
     expect(typeof limiter.reset).toBe('function')
 
-    const client = new core.CsdnHttpClient({ config: core.DEFAULT_CONFIG, fetchImpl: async () => ({ status: 200, headers: { get: () => null }, text: async () => '{}' }) })
+    const client = new core.CsdnHttpClient({
+      config: core.DEFAULT_CONFIG,
+      fetchImpl: async () => ({ status: 200, headers: { get: () => null }, text: async () => '{}' })
+    })
     expect(typeof client.request).toBe('function')
   })
 
@@ -92,13 +95,13 @@ describe('core barrel', () => {
       import('../../../src/core/signer.js'),
       import('../../../src/core/http.js')
     ])
-    const expected = new Set(modules.flatMap((module) => Object.keys(module)))
+    const expected = new Set(modules.flatMap(module => Object.keys(module)))
 
     expect(Object.keys(core).sort()).toEqual([...expected].sort())
   })
 
   it('never exposes an undefined export, which would betray a broken re-export', () => {
-    const undefinedNames = Object.keys(core).filter((name) => read(name) === undefined)
+    const undefinedNames = Object.keys(core).filter(name => read(name) === undefined)
 
     expect(undefinedNames).toEqual([])
   })

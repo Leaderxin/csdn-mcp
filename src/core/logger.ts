@@ -49,10 +49,7 @@ const CREDENTIAL_NAMES = 'UserToken|UserName|csrfToken|uuid_tt_dd|c_session|Set-
  * a JSON value may legitimately contain a comma, and truncating at the comma
  * would leak the remainder.
  */
-const COOKIE_PATTERN = new RegExp(
-  `(${CREDENTIAL_NAMES})(["']?\\s*[=:]\\s*["']?)([^\\s;}"']{2,})`,
-  'gi'
-)
+const COOKIE_PATTERN = new RegExp(`(${CREDENTIAL_NAMES})(["']?\\s*[=:]\\s*["']?)([^\\s;}"']{2,})`, 'gi')
 
 /**
  * Redact anything that looks like a credential. Applied to every log line AND
@@ -63,7 +60,10 @@ const COOKIE_PATTERN = new RegExp(
  * syntax instead of being mangled into unbalanced quotes.
  */
 export function redact(input: string): string {
-  return input.replace(COOKIE_PATTERN, (_match, name: string, separator: string) => `${name}${separator}<redacted>`)
+  return input.replace(
+    COOKIE_PATTERN,
+    (_match, name: string, separator: string) => `${name}${separator}<redacted>`
+  )
 }
 
 /** Serialize a field value without ever emitting a raw cookie-ish string. */
@@ -101,14 +101,16 @@ export interface CreateLoggerOptions {
  */
 export function createLogger(options: CreateLoggerOptions = {}): Logger {
   const level = options.level ?? 'warn'
-  const sink: LogSink = options.sink ?? ((line) => process.stderr.write(`${line}\n`))
+  const sink: LogSink = options.sink ?? (line => process.stderr.write(`${line}\n`))
   const bindings = options.bindings ?? {}
   const threshold = LEVEL_WEIGHT[level]
 
-  const emit = (messageLevel: Exclude<LogLevel, 'silent'>) => (message: string, fields?: LogFields): void => {
-    if (threshold === 0 || LEVEL_WEIGHT[messageLevel] > threshold) return
-    sink(formatLine(messageLevel, message, bindings, fields))
-  }
+  const emit =
+    (messageLevel: Exclude<LogLevel, 'silent'>) =>
+    (message: string, fields?: LogFields): void => {
+      if (threshold === 0 || LEVEL_WEIGHT[messageLevel] > threshold) return
+      sink(formatLine(messageLevel, message, bindings, fields))
+    }
 
   return {
     level,
@@ -116,7 +118,6 @@ export function createLogger(options: CreateLoggerOptions = {}): Logger {
     warn: emit('warn'),
     info: emit('info'),
     debug: emit('debug'),
-    child: (extra: LogFields) =>
-      createLogger({ level, sink, bindings: { ...bindings, ...extra } })
+    child: (extra: LogFields) => createLogger({ level, sink, bindings: { ...bindings, ...extra } })
   }
 }

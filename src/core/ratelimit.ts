@@ -14,8 +14,8 @@
 export type Sleep = (ms: number) => Promise<void>
 export type Now = () => number
 
-export const defaultSleep: Sleep = (ms) =>
-  new Promise((resolve) => {
+export const defaultSleep: Sleep = ms =>
+  new Promise(resolve => {
     setTimeout(resolve, ms)
   })
 
@@ -46,7 +46,10 @@ export class RateLimiter {
    * `minIntervalMs <= 0` disables throttling for that key.
    */
   async acquire(key: string, minIntervalMs: number): Promise<number> {
-    const state = this.states.get(key) ?? { lastGrantedAt: Number.NEGATIVE_INFINITY, queue: Promise.resolve() }
+    const state = this.states.get(key) ?? {
+      lastGrantedAt: Number.NEGATIVE_INFINITY,
+      queue: Promise.resolve()
+    }
     this.states.set(key, state)
 
     let waited = 0

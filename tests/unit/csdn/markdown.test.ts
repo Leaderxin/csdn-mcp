@@ -73,17 +73,9 @@ describe('stripMarkdown', () => {
   })
 
   it('never emits a # or a * marker, because a description with ## in it reads as a bug', () => {
-    const markdown = [
-      '# 标题',
-      '',
-      '> 引用 **重点**',
-      '',
-      '- 列表 *项*',
-      '',
-      '---',
-      '',
-      '普通段落'
-    ].join('\n')
+    const markdown = ['# 标题', '', '> 引用 **重点**', '', '- 列表 *项*', '', '---', '', '普通段落'].join(
+      '\n'
+    )
     const text = stripMarkdown(markdown)
     expect(text).toBe('标题 引用 重点 列表 项 普通段落')
     expect(text).not.toContain('#')
@@ -119,12 +111,15 @@ describe('deriveDescription', () => {
     [255, 255],
     [256, 256],
     [257, 256]
-  ])('returns %i source characters as %i characters, exactly, with no ellipsis added', (sourceLength, expected) => {
-    const source = 'a'.repeat(sourceLength)
-    const description = deriveDescription(source)
-    expect(description).toBe('a'.repeat(expected))
-    expect(description.length).toBe(expected)
-  })
+  ])(
+    'returns %i source characters as %i characters, exactly, with no ellipsis added',
+    (sourceLength, expected) => {
+      const source = 'a'.repeat(sourceLength)
+      const description = deriveDescription(source)
+      expect(description).toBe('a'.repeat(expected))
+      expect(description.length).toBe(expected)
+    }
+  )
 
   it('honours a shorter custom limit, because the field length is a parameter, not a constant', () => {
     expect(deriveDescription('# 标题\n\n后续内容', 2)).toBe('标题')
@@ -146,7 +141,7 @@ describe('parseFrontMatter', () => {
 
   it('strips one layer of surrounding single or double quotes, and leaves unbalanced quotes alone', () => {
     const { attributes } = parseFrontMatter(
-      "---\ndouble: \"a b\"\nsingle: 'c d'\nunbalanced: \"half\nvalue: it's fine\n---\nbody"
+      '---\ndouble: "a b"\nsingle: \'c d\'\nunbalanced: "half\nvalue: it\'s fine\n---\nbody'
     )
     expect(attributes).toEqual({
       double: 'a b',

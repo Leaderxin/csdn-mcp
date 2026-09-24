@@ -5,7 +5,7 @@ v1.0.0 的工具面是**冻结**的（`docs/ARCHITECTURE.md` §4）：11 个工�
 ## 通用约定
 
 - 参数用 zod 校验，**不可行的输入在任何网络请求之前就被拒绝**，返回 `INVALID_ARGUMENT`。
-- 成功返回是一个 `text` 内容块，内容为 JSON，前面有一行人类可读的摘要。
+- 成功返回是一个 `text` 内容块：**一行人类可读的摘要** + 一个 ```` ```json ```` 代码块（payload）。摘要给人看，代码块给程序解析，两者都在同一个块里。
 - 失败返回 `{ "isError": true, "content": [...] }`，文本里带错误 `code`。不会把原始异常堆栈丢给 MCP 宿主。
 - 所有 `*_article` / `upload_image` / 元数据工具都需要 `CSDN_COOKIE`（`list_articles` 除外，它走公开接口）。
 - 字段名是 camelCase（`articleId`、`pageSize`、`publicStatusCode`）。**参数名是 snake_case**（`article_id`、`page_size`、`cover_image`）——这两套命名不要互相套用。
@@ -25,7 +25,7 @@ v1.0.0 的工具面是**冻结**的（`docs/ARCHITECTURE.md` §4）：11 个工�
 | `SERVER_ERROR` | CSDN 侧 5xx | 是 |
 | `NOT_FOUND` | 文章/资源不存在（HTTP 404 或信封 `404` / `4004`） | 否 |
 | `INVALID_ARGUMENT` | 入参违反 CSDN 的约束 | 否 |
-| `VERIFY_FAILED` | 写操作的**自检**结果与写入方的成功声明不一致 | 否 |
+| `VERIFY_FAILED` | 写操作的**自检**结果与写入方的成功声明不一致（v1.0.0 的工具层不把它当错误返回，见 `publish_article` 的 `warnings`；此码为兼容保留） | 否 |
 
 `NETWORK` / `TIMEOUT` / `RATE_LIMITED` / `SERVER_ERROR` 会自动重试，默认额外 2 次，退避 500ms → 1s → 2s（上限 8s）；`RATE_LIMITED` 的重试等待改用 `CSDN_SAVE_INTERVAL_MS`。
 
@@ -44,12 +44,23 @@ v1.0.0 的工具面是**冻结**的（`docs/ARCHITECTURE.md` §4）：11 个工�
 **成功返回**
 
 ```json
-{ "userName": "Leaderxin", "valid": true }
+{
+  "userName": "Leaderxin",
+  "valid": true,
+  "liveCheck": {
+    "endpoint": "list_articles",
+    "authenticated": false,
+    "ok": true,
+    "total": 12
+  }
+}
 ```
+
+`liveCheck` 是设置 Cookie 之后的一次**联网自检**：用 `list_articles`（公开社区接口）确认账号可访问。注意它 `authenticated: false`——那个接口本身匿名、不带 Cookie，所以自检通过只说明账号名可用，**不能证明 Cookie 被 CSDN 接受**；Cookie 是否有效要由某个需要登录的调用来给结论。自检失败时 `liveCheck.ok: false` 并带 `error: { code, message }`，此时 Cookie 仍然已经保存成功（返回不是错误，摘要里会写明失败原因）。
 
 **错误码**
 
-`INVALID_ARGUMENT`（Cookie 为空、缺 `UserToken`、或找不到 `UserName`）。结构校验完全在本地完成，不发任何请求，因此不会返回 `NETWORK` / `TIMEOUT` / `AUTH_INVALID`。
+`INVALID_ARGUMENT`（Cookie 为空、缺 `UserToken`、或找不到 `UserName`）。结构校验完全在本地完成，不发任何请求，因此不会返回 `NETWORK` / `TIMEOUT` / `AUTH_INVALID`。（自检阶段的联网错误不会让调用失败，只体现在 `liveCheck` 里。）
 
 **示例**
 
@@ -77,7 +88,9 @@ v1.0.0 的工具面是**冻结**的（`docs/ARCHITECTURE.md` §4）：11 个工�
 }
 ```
 
-`configured: false` 表示 `CSDN_COOKIE` 为空；`valid: false` 时返回值里会带原因（例如缺少 `UserToken`）。
+`configured: false` 表示 `CSDN_COOKIE` 为空，此时会额外返回 `howToConfigure`（怎么设置，含环境变量名）；`configured: true` 但 `valid: false` 时会额外返回 `reason`（例如缺少 `UserToken`）。`username` 优先取配置里的账号名，没有则回退到 Cookie 里的 `UserName`。
+
+Cookie 内容本身**永远不会**出现在返回值里。
 
 **错误码**：无。
 
@@ -105,7 +118,7 @@ v1.0.0 的工具面是**冻结**的（`docs/ARCHITECTURE.md` §4）：11 个工�
 | `description` | string | 否 | 摘要，**≤ 256 字**。超过 256 的部分不会上线——写入层会先截断到 256（CSDN 自己也是按 256 截断的） |
 | `tags` | string[] | 否 | **最多 5 个**。超过直接 `INVALID_ARGUMENT`（线上会把它拼成逗号连接的字符串） |
 | `categories` | string | 否 | 分类名。取 `list_categories` 的返回值 |
-| `cover_image` | string | 否 | 封面图 URL，填 `upload_image` 且 `kind: "cover"` 返回的 `url` |
+| `cover_image` | string | 否 | 封面图：填 `upload_image`（`kind: "cover"`）返回的 `url`；也可以直接给**本地图片路径**，这时会以 `kind: "cover"` 自动上传（`http(s)://` 开头的值不会被重复上传） |
 | `mode` | `"draft"` \| `"publish"` | 否 | 默认 `"draft"` |
 | `verify` | boolean | 否 | 默认 `true`：写入后回查 API 状态 + 公开页 |
 
@@ -116,22 +129,26 @@ v1.0.0 的工具面是**冻结**的（`docs/ARCHITECTURE.md` §4）：11 个工�
   "articleId": "149234567",
   "url": "https://blog.csdn.net/Leaderxin/article/details/149234567",
   "state": "draft",
+  "mode": "draft",
   "verification": {
     "articleId": "149234567",
     "state": "draft",
     "statusCode": 2,
     "publicStatusCode": 404,
     "consistent": true,
-    "message": "草稿状态与公开页一致（公开页 404）"
+    "message": "草稿已确认：接口 status=2，公开页 404"
   }
 }
 ```
 
-`verification` 在 `verify: false` 时不出现。
+- `state` 取自自检结果；`verify: false` 时**不出现** `verification`，`state` 为 `"unknown"`（`saveArticle` 返回 200 既可能是草稿也可能是发布，所以这里不猜）。
+- `warnings` 只在有话说时出现（数组，逐条中文）。两种情况会有它：
+  1. 自检不一致——`verification.consistent: false`，原文照录；
+  2. **意图是草稿但文章已经对外可见**（接口显示已发布，或公开页返回 200）——这是踩过的事故：接口无法把已发布的文章退回草稿，此时 `warnings` 里会出现「立即删除、调用 `delete_article`」的处置建议，**摘要行最前面也会重复它**。自检不一致不会让调用变成错误返回，因为那样会丢掉 `articleId`——而删除它恰恰需要这个 id。
 
 **错误码**
 
-`INVALID_ARGUMENT`（`tags` > 5、`markdown` 为空）、`AUTH_MISSING`、`AUTH_INVALID`、`RATE_LIMITED`（两次保存间隔不足）、`API_ERROR`（含 `saveArticle` 没返回文章 id 的情况）、`MALFORMED_RESPONSE`、`VERIFY_FAILED`（写入声称成功但自检不一致），以及上表的通用联网错误码。
+`INVALID_ARGUMENT`（`tags` > 5、`description` > 256 字、`markdown` 为空）、`AUTH_MISSING`、`AUTH_INVALID`、`RATE_LIMITED`（两次保存间隔不足）、`API_ERROR`、`MALFORMED_RESPONSE`（含 `saveArticle` 没返回文章 id 的情况），以及上表的通用联网错误码。自检不一致**不是**错误码，而是 `verification.consistent: false` + `warnings`（见上）。
 
 **示例**
 
@@ -165,7 +182,9 @@ v1.0.0 的工具面是**冻结**的（`docs/ARCHITECTURE.md` §4）：11 个工�
 | `tags` | string[] | 否 | ≤ 5 个 |
 | `categories` | string | 否 | 分类名 |
 | `cover_image` | string | 否 | 封面图 URL |
-| `mode` | `"draft"` \| `"publish"` | 否 | 默认 `"draft"` |
+| `mode` | `"draft"` \| `"publish"` | 否 | **不传则沿用文章当前的可见性**：已发布/审核中 → `publish`，其余 → `draft`（见下） |
+
+至少要传一个要修改的字段，只传 `article_id` 会直接 `INVALID_ARGUMENT`（`saveArticle` 是整条重写，什么都没改的重写只会白冒一次写风险）。
 
 **成功返回**
 
@@ -173,15 +192,27 @@ v1.0.0 的工具面是**冻结**的（`docs/ARCHITECTURE.md` §4）：11 个工�
 {
   "articleId": "149234567",
   "url": "https://blog.csdn.net/Leaderxin/article/details/149234567",
-  "state": "published"
+  "state": "published",
+  "mode": "publish",
+  "verification": {
+    "articleId": "149234567",
+    "state": "published",
+    "statusCode": 1,
+    "publicStatusCode": 200,
+    "consistent": true,
+    "message": "发布已确认：接口 status=1，公开页 200"
+  }
 }
 ```
 
-`update_article` 的参数表里没有 `verify`（见 `docs/ARCHITECTURE.md` §4），但它和 `publish_article` 一样**默认执行写入后自检**。自检不一致时报 `VERIFY_FAILED`。
+- **未传的字段保持原值**：先用 `getArticle` 读当前记录，再把未传的字段合并回去（`saveArticle` 会整条覆盖，不合并就会把标题/标签/摘要/封面清空）。`cover_image` 只有传了新的才会重新上传。
+- **`mode` 不传时保持当前可见性**：已发布（`published`）或审核中（`reviewing`）的文章会按 `publish` 写入，避免一次元数据修改把它退回草稿；草稿仍是草稿。要发布草稿必须显式 `mode: "publish"`。返回值里的 `mode` 是本次实际写入的模式。
+- 参数表里没有 `verify`（见 `docs/ARCHITECTURE.md` §4），所以本工具**总是**执行写入后自检（多两次请求：接口状态 + 公开页）。自检不一致时 `verification.consistent: false` 并写进 `warnings`，不会变成错误返回（否则 `articleId` 会丢）。
+- `warnings` 里还有一条最容易踩的：**修改已公开（含审核中）文章的 `markdown` 时**，会明确告知接口不会更新线上正文、需要在编辑器 UI 重新发布，并给出该文章的编辑器地址。
 
 **错误码**
 
-`INVALID_ARGUMENT`、`NOT_FOUND`、`AUTH_MISSING`、`AUTH_INVALID`、`RATE_LIMITED`、`VERIFY_FAILED`，以及通用联网错误码。
+`INVALID_ARGUMENT`、`NOT_FOUND`、`AUTH_MISSING`、`AUTH_INVALID`、`RATE_LIMITED`，以及通用联网错误码。
 
 **已知边界**：**已经发布**的文章，正文（`markdown`）改不动。CSDN 只在编辑器 UI 发布时把正文应用到线上，API 改的是草稿副本。见 [FAQ](FAQ.md#能改已经发布的文章吗)。
 
@@ -227,6 +258,8 @@ v1.0.0 的工具面是**冻结**的（`docs/ARCHITECTURE.md` §4）：11 个工�
 ```
 
 `reason` 是审核原因，干净的文章为空字符串。`raw` 是未建模字段的原始信封，用于排查。
+
+`include_content: false` 会同时去掉 `markdownContent` / `htmlContent`，以及 `raw` 里的 `content` / `markdowncontent` 副本——`raw` 是整条记录，不一起裁掉就等于没省下上下文。返回的摘要行会说明已省略正文。
 
 **错误码**
 
@@ -308,6 +341,8 @@ v1.0.0 的工具面是**冻结**的（`docs/ARCHITECTURE.md` §4）：11 个工�
 ```json
 { "articleId": "149234567", "permanent": false }
 ```
+
+摘要行始终写清楚这次是**移入回收站**还是**彻底删除**：默认（`permanent: false` / 不传）进回收站，可在创作中心的「内容管理 → 回收站」还原；只有显式 `permanent: true` 才会彻底删除（摘要里会写"不可恢复"）。
 
 **错误码**
 
@@ -417,7 +452,7 @@ v1.0.0 的工具面是**冻结**的（`docs/ARCHITECTURE.md` §4）：11 个工�
 | 名称 | 类型 | 必填 | 约束 |
 |---|---|---|---|
 | `article_id` | string | 是 | 文章 ID |
-| `expected` | `"draft"` \| `"publish"` | 否 | 你期望的状态；省略时使用工具的内置默认值 |
+| `expected` | `"draft"` \| `"publish"` | 否 | 你期望的状态。省略时按文章当前状态推断：`published` / `reviewing` → `publish`，其余 → `draft`（多花一次 `getArticle`）；摘要行会写明本次按哪个 `expected` 判定 |
 
 **成功返回**（`VerificationResult`）
 
@@ -438,6 +473,8 @@ v1.0.0 的工具面是**冻结**的（`docs/ARCHITECTURE.md` §4）：11 个工�
 - `expected: "publish"`：API 状态是 `published`（`statusCode: 0` 或 `1`）**或** `reviewing`（`16`，是合法的在途状态）**且**公开页返回 200。
 
 两个条件缺一不可。只看 API 的 `status` 会漏判，只看公开页会误判审核中。
+
+成功返回的载荷**就是**上面那 6 个字段（`VerificationResult`），不含额外包装；判定用的 `expected` 在摘要行里。
 
 **错误码**
 

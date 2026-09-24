@@ -87,7 +87,7 @@ describe('buildSaveArticleBody', () => {
 
   it('can never produce status 0, which CSDN now treats as an immediate publish', () => {
     const statuses = (['draft', 'publish'] as const).map(
-      (mode) => buildSaveArticleBody(articleInput({ mode }))['status']
+      mode => buildSaveArticleBody(articleInput({ mode }))['status']
     )
     expect(statuses).toEqual([2, 1])
     expect(statuses).not.toContain(0)
@@ -171,7 +171,11 @@ describe('ArticleClient.save', () => {
     expect(result).toEqual({
       id: '1042',
       url: 'https://blog.csdn.net/alice/article/details/1042',
-      raw: { id: '1042', url: 'https://blog.csdn.net/alice/article/details/1042', qrcode: 'https://csdn.net/q.png' }
+      raw: {
+        id: '1042',
+        url: 'https://blog.csdn.net/alice/article/details/1042',
+        qrcode: 'https://csdn.net/q.png'
+      }
     })
   })
 
@@ -257,7 +261,7 @@ describe('ArticleClient.save', () => {
 
     await client.save(articleInput({ mode: 'publish' }))
 
-    expect(lines.some((line) => line.includes('saving article') && line.includes('mode=publish'))).toBe(true)
+    expect(lines.some(line => line.includes('saving article') && line.includes('mode=publish'))).toBe(true)
     expect(lines.join('\n')).not.toContain('secret-token-value')
   })
 })
@@ -483,7 +487,7 @@ describe('ArticleClient.list', () => {
 
     const headers = lowerHeaders(fake.last().headers)
     expect(headers).not.toHaveProperty('cookie')
-    expect(Object.keys(headers).filter((name) => name.startsWith('x-ca-'))).toEqual([])
+    expect(Object.keys(headers).filter(name => name.startsWith('x-ca-'))).toEqual([])
     expect(headers['user-agent']).toContain('Mozilla')
   })
 

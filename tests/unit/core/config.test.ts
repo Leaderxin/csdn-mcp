@@ -11,8 +11,7 @@ import {
   validateCookie
 } from '../../../src/core/config.js'
 
-const COOKIE =
-  'UserToken=abcdef123456; UserName=bob; uuid_tt_dd=10_1234567890-12345-98765; csrfToken=xyz'
+const COOKIE = 'UserToken=abcdef123456; UserName=bob; uuid_tt_dd=10_1234567890-12345-98765; csrfToken=xyz'
 
 describe('parseCookie', () => {
   it('splits a normal "a=b; c=d" header into one entry per pair', () => {

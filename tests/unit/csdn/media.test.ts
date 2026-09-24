@@ -255,7 +255,7 @@ describe('MediaClient step 2 — the multipart upload', () => {
     await client.uploadBuffer(Buffer.from('png-bytes'), 'body', 'photo.png')
 
     const form = formOf(fake.requests[1])
-    expect([...form.keys()].filter((key) => key.startsWith('x:'))).toEqual([])
+    expect([...form.keys()].filter(key => key.startsWith('x:'))).toEqual([])
     expect(form.get('key')).toBe(FILE_PATH)
   })
 
@@ -402,7 +402,7 @@ describe('MediaClient logger', () => {
 
     await client.uploadBuffer(Buffer.from('png-bytes'), 'body', 'photo.png')
 
-    expect(lines.some((line) => line.includes('image uploaded'))).toBe(true)
-    expect(lines.some((line) => line.includes(FILE_PATH))).toBe(true)
+    expect(lines.some(line => line.includes('image uploaded'))).toBe(true)
+    expect(lines.some(line => line.includes(FILE_PATH))).toBe(true)
   })
 })

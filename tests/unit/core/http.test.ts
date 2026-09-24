@@ -133,7 +133,9 @@ describe('CsdnHttpClient.url', () => {
 
   it('appends a query string when params survive filtering', () => {
     const { client } = makeClient(createFakeFetch())
-    expect(client.url('/v1/x', { id: 7, q: '中文' })).toBe('https://bizapi.csdn.net/v1/x?id=7&q=%E4%B8%AD%E6%96%87')
+    expect(client.url('/v1/x', { id: 7, q: '中文' })).toBe(
+      'https://bizapi.csdn.net/v1/x?id=7&q=%E4%B8%AD%E6%96%87'
+    )
   })
 
   it('adds no "?" when there are no params', () => {
@@ -176,7 +178,9 @@ describe('CsdnHttpClient.request auth', () => {
     const fake = createFakeFetch(okEnvelope({ ok: true }))
     const { client } = makeClient(fake, { cookie: '' })
 
-    await expect(client.requestData({ path: '/v1/public', signed: false, requireAuth: false })).resolves.toEqual({
+    await expect(
+      client.requestData({ path: '/v1/public', signed: false, requireAuth: false })
+    ).resolves.toEqual({
       ok: true
     })
     expect(fake.last().headers['Cookie']).toBeUndefined()
@@ -260,7 +264,7 @@ describe('CsdnHttpClient.request headers and body', () => {
     const { client } = makeClient(fake)
 
     await client.request({ path: '/v1/public', signed: false })
-    const caHeaders = Object.keys(fake.last().headers).filter((key) => key.toLowerCase().startsWith('x-ca-'))
+    const caHeaders = Object.keys(fake.last().headers).filter(key => key.toLowerCase().startsWith('x-ca-'))
     expect(caHeaders).toEqual([])
   })
 
@@ -435,7 +439,9 @@ describe('parseJsonBody', () => {
     const fake = createFakeFetch(openresty404(), openresty404(), openresty404())
     const { client } = makeClient(fake)
 
-    await expect(client.requestData({ path: '/v1/dead' })).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
+    await expect(client.requestData({ path: '/v1/dead' })).rejects.toMatchObject({
+      code: 'MALFORMED_RESPONSE'
+    })
   })
 })
 
@@ -501,9 +507,9 @@ describe('unwrapEnvelope', () => {
   })
 
   it('appends the request path so a failure names the call it came from', () => {
-    expect(() => unwrapEnvelope({ code: 4004, msg: '文章不存在' }, '/blog-console-api/v1/article/get')).toThrowError(
-      expect.objectContaining({ message: '文章不存在（/blog-console-api/v1/article/get）' })
-    )
+    expect(() =>
+      unwrapEnvelope({ code: 4004, msg: '文章不存在' }, '/blog-console-api/v1/article/get')
+    ).toThrowError(expect.objectContaining({ message: '文章不存在（/blog-console-api/v1/article/get）' }))
   })
 
   it('returns data through requestData so callers never see the envelope', async () => {
@@ -678,13 +684,19 @@ describe('request retry behaviour', () => {
     const fake = createFakeFetch({ status: 500, body: 'boom' })
     const { client, clock } = makeClient(fake, { maxRetries: 3 })
 
-    await expect(client.request({ path: '/v1/x', retries: 0 })).rejects.toMatchObject({ code: 'SERVER_ERROR' })
+    await expect(client.request({ path: '/v1/x', retries: 0 })).rejects.toMatchObject({
+      code: 'SERVER_ERROR'
+    })
     expect(fake.requests).toHaveLength(1)
     expect(clock.sleeps).toEqual([])
   })
 
   it('records one request per attempt so a caller can see how many tries it cost', async () => {
-    const fake = createFakeFetch({ status: 500, body: 'boom' }, { status: 500, body: 'boom' }, okEnvelope({ ok: true }))
+    const fake = createFakeFetch(
+      { status: 500, body: 'boom' },
+      { status: 500, body: 'boom' },
+      okEnvelope({ ok: true })
+    )
     const { client, clock } = makeClient(fake, { maxRetries: 2 })
 
     await expect(client.requestData({ path: '/v1/x' })).resolves.toEqual({ ok: true })
@@ -797,7 +809,11 @@ describe('request timeouts', () => {
     const fetchImpl: FetchLike = async () => {
       throw abort
     }
-    const client = new CsdnHttpClient({ config: makeConfig({ maxRetries: 0 }), fetchImpl, sleep: async () => undefined })
+    const client = new CsdnHttpClient({
+      config: makeConfig({ maxRetries: 0 }),
+      fetchImpl,
+      sleep: async () => undefined
+    })
 
     await expect(client.request({ path: '/v1/x', timeoutMs: 5 })).rejects.toMatchObject({
       code: 'TIMEOUT',
@@ -821,7 +837,7 @@ describe('request timeouts', () => {
     let release: ((response: HttpResponse) => void) | undefined
     const fetchImpl: FetchLike = async (_url, init) => {
       signal = init.signal as AbortSignal
-      return new Promise<HttpResponse>((resolve) => {
+      return new Promise<HttpResponse>(resolve => {
         release = resolve
       })
     }
@@ -900,7 +916,9 @@ describe('CsdnHttpClient.fetchText', () => {
     const fake = createFakeFetch({ status: 200, body: 'ok' })
     const { client } = makeClient(fake)
 
-    await client.fetchText('https://blog.csdn.net/x', { headers: { Referer: 'https://custom/', 'X-Test': '1' } })
+    await client.fetchText('https://blog.csdn.net/x', {
+      headers: { Referer: 'https://custom/', 'X-Test': '1' }
+    })
     expect(fake.last().headers['Referer']).toBe('https://custom/')
     expect(fake.last().headers['X-Test']).toBe('1')
   })
@@ -1017,5 +1035,41 @@ describe('CsdnHttpClient constructor seams', () => {
     client.logger.error('hello')
     expect(stderrWrite).toHaveBeenCalledWith('[csdn-mcp] ERROR hello\n')
     stderrWrite.mockRestore()
+  })
+})
+
+describe('default fetch wiring', () => {
+  it('falls back to the global fetch when no fetchImpl is injected', async () => {
+    // The only test that exercises the default `fetch` binding. Every other test
+    // injects a fake — which is right, but it means the default path would
+    // otherwise be assumed rather than verified, and the binding is the one
+    // thing that cannot be checked by reading the code on a given runtime.
+    const globalFetch = vi.fn(async () => ({
+      status: 200,
+      headers: { get: () => null },
+      text: async () => JSON.stringify({ code: 200, data: { ok: true } })
+    }))
+    const original = globalThis.fetch
+    globalThis.fetch = globalFetch as unknown as typeof fetch
+    try {
+      const client = new CsdnHttpClient({ config: makeConfig(), sleep: () => Promise.resolve() })
+
+      const data = await client.request({
+        method: 'GET',
+        path: '/ping',
+        signed: false,
+        requireAuth: false
+      })
+
+      // `request` returns the raw envelope; callers unwrap it (the tool layer
+      // throws on a non-200 `code`). Asserting the envelope here pins that
+      // contract rather than a convenience shape.
+      expect(data).toEqual({ code: 200, data: { ok: true } })
+      expect(globalFetch).toHaveBeenCalledTimes(1)
+      const [url] = globalFetch.mock.calls[0] as unknown as [string]
+      expect(url).toContain('/ping')
+    } finally {
+      globalThis.fetch = original
+    }
   })
 })

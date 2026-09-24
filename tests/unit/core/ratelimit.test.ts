@@ -114,7 +114,7 @@ describe('RateLimiter.acquire', () => {
     // Exactly one caller got a free slot; the others each waited a full interval
     // measured from the *previous grant*, so grants land at 0s, 10s and 20s.
     expect(results[0]).toBe(0)
-    expect(results.filter((waited) => waited === 0)).toHaveLength(1)
+    expect(results.filter(waited => waited === 0)).toHaveLength(1)
     expect(results.slice(1)).toEqual([10_000, 10_000])
     expect(clock.sleeps.reduce((total, ms) => total + ms, 0)).toBeGreaterThanOrEqual(2 * 10_000)
     // A "check the timestamp then proceed" limiter would compute both waits from

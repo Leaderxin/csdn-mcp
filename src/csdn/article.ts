@@ -365,8 +365,8 @@ function splitTags(value: unknown): string[] {
   if (typeof value !== 'string') return []
   return value
     .split(',')
-    .map((tag) => tag.trim())
-    .filter((tag) => tag !== '')
+    .map(tag => tag.trim())
+    .filter(tag => tag !== '')
 }
 
 /**

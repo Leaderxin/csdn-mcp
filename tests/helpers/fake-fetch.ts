@@ -26,7 +26,8 @@ export interface ResponseSpec {
   headers?: Record<string, string>
 }
 
-export type ResponseScript = ResponseSpec | ((request: RecordedRequest, index: number) => ResponseSpec | Promise<ResponseSpec>)
+export type ResponseScript =
+  ResponseSpec | ((request: RecordedRequest, index: number) => ResponseSpec | Promise<ResponseSpec>)
 
 export interface FakeFetch {
   fetch: FetchLike
@@ -53,7 +54,8 @@ function toHeaders(init: RequestInit): Record<string, string> {
 
 function makeResponse(spec: ResponseSpec): HttpResponse {
   const status = spec.status ?? 200
-  const body = typeof spec.body === 'string' ? spec.body : spec.body === undefined ? '' : JSON.stringify(spec.body)
+  const body =
+    typeof spec.body === 'string' ? spec.body : spec.body === undefined ? '' : JSON.stringify(spec.body)
   const headers = spec.headers ?? {}
   return {
     status,
@@ -106,7 +108,7 @@ export function createFakeFetch(...script: ResponseScript[]): FakeFetch {
   return {
     fetch: fake,
     requests,
-    matching: (fragment: string) => requests.filter((request) => request.url.includes(fragment)),
+    matching: (fragment: string) => requests.filter(request => request.url.includes(fragment)),
     last: () => {
       const last = requests.at(-1)
       if (!last) throw new Error('no request was recorded')
