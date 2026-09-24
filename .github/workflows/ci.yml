@@ -88,28 +88,67 @@ jobs:
 
       - name: No credentials in tracked files
         # This repo's whole job is handling a CSDN cookie, so the one mistake
-        # that actually matters is committing it. The patterns below match every
-        # credential shape this project touches; the .env path check catches the
-        # file being added despite .gitignore.
+        # that actually matters is committing it.
         #
         # Implemented inline rather than with a third-party scanner so the check
-        # has no license or network dependency and can be run locally verbatim:
-        #   bash .github/workflows/ci.yml  (no)  ->  grep -nE '<pattern>' $(git ls-files)
+        # has no license or network dependency and can be re-run locally.
+        #
+        # The patterns are keyed on the MEASURED shape of a real CSDN cookie, not
+        # on a generic "looks like a secret" heuristic. Measurements (2026-09):
+        #   UserToken  = 32 hex characters
+        #   uuid_tt_dd = 35 characters
+        #   a whole cookie = ~1670 characters across ~38 `name=value;` pairs
+        # A first version used "any 16+ char value after UserToken=", which fired
+        # on the test fixtures (`UserToken=secret-token-value`). A scanning job
+        # that cries wolf on its own test data gets switched off, so the patterns
+        # are narrow on purpose.
         run: |
           set -euo pipefail
+
+          fail() { echo "::error::$1"; exit 1; }
+
+          # --- self-test: the patterns must still catch synthetic leaks --------
+          # Without this, a pattern that silently stops matching would report
+          # "clean" forever and nobody would notice. The first version of this
+          # job piped `git ls-files -z | xargs -0 grep`; xargs splits into
+          # batches, and a batch with no match makes grep exit 1, which makes the
+          # whole condition false — so a leak in ANOTHER batch was missed and the
+          # length rule was dead outright. `git grep` is one process and exits 0
+          # iff anything matched, which is what these rules assume.
+          sample_token="UserToken=$(printf 'a1b2c3d4%.0s' {1..4})"
+          if ! printf '%s\n' "$sample_token" | grep -qE "$TOKEN_RE"; then
+            fail "secret-scan self-test failed: the UserToken pattern no longer matches a real-shaped token"
+          fi
+          sample_whole="UserToken=$(printf 'a1b2c3d4%.0s' {1..4}) $(printf 'k=v; %.0s' {1..80})"
+          if ! printf '%s\n' "$sample_whole" | awk "$LONG_LINE_AWK"; then
+            fail "secret-scan self-test failed: the pasted-cookie length rule no longer fires"
+          fi
+
+          # --- 1. the .env file itself ----------------------------------------
           if git ls-files --error-unmatch .env >/dev/null 2>&1; then
-            echo "::error::.env is tracked by git — remove it with 'git rm --cached .env'"
-            exit 1
+            fail ".env is tracked by git — remove it with 'git rm --cached .env'"
           fi
-          # A populated CSDN_COOKIE is the one thing that must never be committed.
-          if git ls-files -z | xargs -0 grep -lE 'CSDN_COOKIE[[:space:]]*=[[:space:]]*"?[^"[:space:]]{20,}' 2>/dev/null; then
-            echo "::error::a populated CSDN_COOKIE literal is committed"
-            exit 1
+
+          # --- 2. a populated CSDN_COOKIE literal ------------------------------
+          if git grep -qE 'CSDN_COOKIE[[:space:]]*=[[:space:]]*"?[^"[:space:]]{20,}'; then
+            fail "a populated CSDN_COOKIE literal is committed"
           fi
-          # Cookie payload tokens. docs/*.md legitimately mention the NAMES of
-          # these fields, so match an assignment to a real-looking value only.
-          if git ls-files -z -- ':!docs' ':!*.md' | xargs -0 grep -lE '(UserToken|csrfToken|c_session)[[:space:]]*=[[:space:]]*"?[A-Za-z0-9_-]{16,}' 2>/dev/null; then
-            echo "::error::a cookie token value is committed outside the docs"
-            exit 1
+
+          # --- 3. a real-shaped token value ------------------------------------
+          # 32 hex chars for UserToken; 30+ for uuid_tt_dd. Test fixtures use
+          # short human-readable values and deliberately do not match.
+          if git grep -qE '(UserToken=[0-9a-fA-F]{32}|uuid_tt_dd=[^[:space:];"]{30,})'; then
+            fail "a real-shaped CSDN token value is committed"
           fi
-          echo "no credentials found in tracked files"
+
+          # --- 4. a whole pasted cookie header ---------------------------------
+          # A real one is ~1670 characters on one line; 400 is a deliberately
+          # generous floor so a partial paste is still caught.
+          if git grep -hE 'UserToken=' | awk "$LONG_LINE_AWK"; then
+            fail "a pasted cookie header is committed"
+          fi
+
+          echo "secret scan passed: no .env, no CSDN_COOKIE literal, no real-shaped token, no pasted cookie"
+        env:
+          TOKEN_RE: 'UserToken=[0-9a-fA-F]{32}'
+          LONG_LINE_AWK: 'length($0) > 400 { found = 1 } END { exit(found ? 0 : 1) }'
