@@ -60,6 +60,18 @@ export interface RequestOptions {
   requireAuth?: boolean
   /** Extra attempts after the first. Defaults to `config.maxRetries`. */
   retries?: number
+  /**
+   * Whether repeating this request is safe when the outcome is unknown.
+   * Defaults to `true` for GET and `false` for everything else.
+   *
+   * This exists because a retry can duplicate a write. `saveArticle` has no
+   * idempotency key: if the first POST reached CSDN and only the *response* was
+   * lost (a 502, or the client timing out), re-sending it creates a second
+   * article. A non-idempotent request is therefore retried only on
+   * `RATE_LIMITED` — the one failure where CSDN answered and explicitly refused,
+   * so the write provably did not happen.
+   */
+  idempotent?: boolean
   timeoutMs?: number
   /** Minimum spacing between two calls sharing `rateLimitKey`. */
   minIntervalMs?: number
@@ -150,7 +162,12 @@ export class CsdnHttpClient {
    */
   async request<T = CsdnEnvelope>(options: RequestOptions): Promise<T> {
     const method: HttpMethod = options.method ?? 'POST'
-    const signed = options.signed ?? true
+    // A multipart body is what marks a request as going to the object store
+    // rather than to CSDN, so it must never carry the cookie or a signature:
+    // `postToStore` is a third-party host. Documented here because the default
+    // used to say "implied" while the code said `?? true`.
+    const signed = options.signed ?? options.formData === undefined
+    const idempotent = options.idempotent ?? method === 'GET'
     const hasBody = options.body !== undefined && options.formData === undefined
     const contentType =
       options.contentType !== undefined
@@ -181,25 +198,25 @@ export class CsdnHttpClient {
       // relative path would be.
       const signPath = absolute ? new URL(url).pathname : options.path
       const signQuery = absolute ? new URL(url).search.replace(/^\?/, '') : query
-      Object.assign(
-        headers,
-        buildSignHeaders({
-          method,
-          path: signPath,
-          query: signQuery,
-          accept,
-          contentType,
-          appKey: this.config.appKey,
-          appSecret: this.config.appSecret
-        })
-      )
+      // `nonce` and `uri` are helper fields of the signer's return value, not
+      // wire headers; spreading the whole object onto the request used to send
+      // them to CSDN on every signed call.
+      const {
+        nonce: _nonce,
+        uri: _uri,
+        ...signHeaders
+      } = buildSignHeaders({
+        method,
+        path: signPath,
+        query: signQuery,
+        accept,
+        contentType,
+        appKey: this.config.appKey,
+        appSecret: this.config.appSecret
+      })
+      Object.assign(headers, signHeaders)
     }
     if (requireAuth) headers['Cookie'] = this.config.cookie
-
-    await this.rateLimiter.acquire(
-      options.rateLimitKey ?? `${method} ${options.path}`,
-      options.minIntervalMs ?? this.config.minRequestIntervalMs
-    )
 
     const attempts = 1 + Math.max(0, options.retries ?? this.config.maxRetries)
     let lastError: CsdnError | undefined
@@ -212,12 +229,23 @@ export class CsdnHttpClient {
         await this.sleep(delay)
       }
 
+      // Every attempt passes through the limiter, not just the first. Acquiring
+      // once outside the loop spaced only the first try, so two 500s turned one
+      // save into three POSTs inside the interval CSDN asked for.
+      await this.rateLimiter.acquire(
+        options.rateLimitKey ?? `${method} ${options.path}`,
+        options.minIntervalMs ?? this.config.minRequestIntervalMs
+      )
+
       try {
         return await this.attempt<T>(url, method, headers, options)
       } catch (error) {
         const csdnError = toCsdnError(error)
         lastError = csdnError
-        if (!csdnError.retryable || attempt === attempts - 1) throw csdnError
+        // A non-idempotent request may only be repeated when CSDN explicitly
+        // refused it, because then nothing was written. See `idempotent`.
+        const mayRetry = idempotent ? csdnError.retryable : csdnError.code === 'RATE_LIMITED'
+        if (!mayRetry || attempt === attempts - 1) throw csdnError
       }
     }
 
@@ -364,7 +392,25 @@ export function parseJsonBody<T>(text: string): T {
  * status code.
  */
 export function unwrapEnvelope<T>(envelope: CsdnEnvelope<T>, context = ''): T {
-  const code = envelope.code ?? 200
+  const where = context === '' ? '' : `（${context}）`
+  const code = envelope.code
+  if (code === undefined) {
+    // No `code` at all. A few endpoints answer with a bare payload, so `data` is
+    // accepted — but only when the body carries no counter-signal. CSDN's
+    // phoenix errors report `status` rather than `code`, so `{status:500,...}`
+    // and `{}` used to be read as success, which let a failed delete report
+    // itself as done.
+    const counterSignals = ['msg', 'message', 'status', 'error'] as const
+    const hasCounterSignal = counterSignals.some(
+      key => (envelope as Record<string, unknown>)[key] !== undefined
+    )
+    if (envelope.data !== undefined && envelope.data !== null && !hasCounterSignal) {
+      return envelope.data
+    }
+    throw new CsdnError('MALFORMED_RESPONSE', `接口未返回 code，无法确认请求成功${where}`, {
+      detail: JSON.stringify(envelope)
+    })
+  }
   if (code === 200) {
     if (envelope.data === undefined) {
       // Callers that expect data treat `undefined` as a protocol violation.
@@ -373,7 +419,6 @@ export function unwrapEnvelope<T>(envelope: CsdnEnvelope<T>, context = ''): T {
     return envelope.data
   }
   const message = envelope.msg ?? envelope.message ?? `接口返回 code=${code}`
-  const where = context === '' ? '' : `（${context}）`
   if (code === 401 || code === 403 || code === 700) {
     throw new CsdnError('AUTH_INVALID', `${message}${where}`, { detail: message })
   }

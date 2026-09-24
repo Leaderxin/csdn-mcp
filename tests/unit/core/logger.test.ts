@@ -243,3 +243,64 @@ describe('default sink', () => {
     stdoutWrite.mockRestore()
   })
 })
+
+/**
+ * These pin the two redaction call sites and the cookie attribute families. They
+ * exist because all three could be deleted with the whole suite still green: the
+ * only no-leak assertions used fixtures whose attribute names happened to be on
+ * the name list, so a realistic cookie header leaked while CI stayed green.
+ */
+describe('credential redaction covers every emission path', () => {
+  it('redacts a credential carried in a plain string field', () => {
+    const { lines, sink } = createMemorySink()
+    const logger = createLogger({ level: 'debug', sink })
+
+    logger.debug('auth parts', { a: 'UserToken=fixture-token-not-a-credential' })
+
+    expect(lines[0]).not.toContain('fixture-token-not-a-credential')
+    expect(lines[0]).toContain('a=UserToken=<redacted>')
+  })
+
+  it('redacts a credential embedded in an Error field', () => {
+    const { lines, sink } = createMemorySink()
+    const logger = createLogger({ level: 'debug', sink })
+
+    logger.error('request failed', {
+      cause: new Error('boom cookie UserToken=fixture-token-not-a-credential')
+    })
+
+    expect(lines[0]).not.toContain('fixture-token-not-a-credential')
+    expect(lines[0]).toContain('cause=Error: boom cookie UserToken=<redacted>')
+  })
+
+  it('redacts CSDN session attributes that carry a variable suffix', () => {
+    const { lines, sink } = createMemorySink()
+    const logger = createLogger({ level: 'debug', sink })
+
+    // `c_session_id`, not `c_session`: matching the bare family name left the
+    // value in place, which is how a real cookie header survived.
+    logger.debug('headers', { Cookie: 'c_session_id=0c1d2e3f4a5b6c7d8e9f; Hm_up_9e2c1b=abcdef123456' })
+
+    expect(lines[0]).not.toContain('0c1d2e3f4a5b6c7d8e9f')
+    expect(lines[0]).not.toContain('abcdef123456')
+  })
+
+  it('redacts a credential inside a JSON-serialized object field', () => {
+    const { lines, sink } = createMemorySink()
+    const logger = createLogger({ level: 'debug', sink })
+
+    logger.debug('batch', { fields: { nested: { UserToken: 'fixture-token-not-a-credential' } } })
+
+    expect(lines[0]).not.toContain('fixture-token-not-a-credential')
+  })
+
+  it('redacts a Cookie header written with a colon, and visitor-id attributes', () => {
+    expect(redact('Cookie: UserToken=fixture-token-not-a-credential')).not.toContain(
+      'fixture-token-not-a-credential'
+    )
+    expect(redact('bt_user_priv_var=real-secret-value-here')).not.toContain('real-secret-value-here')
+    // The attribute NAME is deliberately kept so the line stays readable; only
+    // the value may disappear.
+    expect(redact('log_Id_1234567890abcd=secretvalue123')).not.toContain('secretvalue123')
+  })
+})

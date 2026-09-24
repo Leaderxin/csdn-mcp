@@ -198,15 +198,20 @@ Rules for every tool handler:
 ## 5. Testing contract
 
 * Runner: **vitest**, `tests/**/*.test.ts`, no live network in `npm test`.
-* `tests/helpers/` provides `createFakeFetch(...)` (a scriptable `FetchLike` that
-  records requests), `createTestContext(...)`, and JSON fixtures under
-  `tests/fixtures/`.
+* `tests/helpers/fake-fetch.ts` provides `createFakeFetch(...)` (a scriptable
+  `FetchLike` that records requests), `createMemorySink()`, and the envelope
+  builders (`okEnvelope`, `apiErrorEnvelope`, `openresty404`). There is no
+  `tests/fixtures/` directory: the envelope shapes are built by those helpers, and
+  a shared `createTestContext(...)` does not exist — the context is assembled
+  per-suite from the same seams the production composition root uses.
 * Coverage thresholds are **100%** for statements/branches/functions/lines over
   `src/**` (excluding `src/index.ts`). `npm run test:coverage` fails the build if
   they are not met — treat a threshold failure as a failing test, not advice.
-* `tests/live/**` holds opt-in integration tests (`CSDN_LIVE=1 npm run test:live`).
-  They may create and delete drafts, but **must never publish**. They are skipped
-  by default.
+* Live checks are **scripts, not vitest specs**: `npm run test:live` builds and
+  runs `scripts/live-smoke.mjs`, which refuses to start unless `CSDN_LIVE=1`.
+  `scripts/verify-post-smoke.mjs` re-checks a finished run afterwards and is
+  read-only. Between them they may create and delete drafts, but **must never
+  publish anything**. (There is no `tests/live/**`.)
 * Every test name states a behavior, not a function name. `it('sends status: 2
   for drafts because 0 publishes the article')` — the "why" is the test.
 

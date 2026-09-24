@@ -38,8 +38,25 @@ const LEVEL_WEIGHT: Record<LogLevel, number> = {
  * a JSON payload survives: `{"cookie":"abcdefg"}` used to slip through because
  * the quote sits between the field name and the colon, and `serializeValue`
  * JSON.stringifies objects before redaction.
+ *
+ * CSDN's own session/visitor attributes carry a variable suffix — the live cookie
+ * has `c_session_id`, `dc_session_id`, `Hm_up_9e2c1b`, `bt_user_priv_var`,
+ * `log_Id_...` — so the family match tolerates a trailing word. Matching only the
+ * bare family name left a real cookie header, values included, in the line.
  */
-const CREDENTIAL_NAMES = 'UserToken|UserName|csrfToken|uuid_tt_dd|c_session|Set-Cookie|Cookie'
+const CREDENTIAL_NAMES = [
+  'UserToken',
+  'csrfToken',
+  'uuid_tt_dd',
+  'UserName',
+  'Set-Cookie',
+  'Cookie',
+  'c_session\\w*',
+  'dc_session\\w*',
+  'Hm_\\w+',
+  'bt_user_priv_var\\w*',
+  'log_Id_\\w*'
+].join('|')
 
 /**
  * Matches `UserToken=abc`, `Cookie: a=b`, `"cookie":"a,b"` and friends.
