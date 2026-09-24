@@ -146,4 +146,7 @@ Agent → verify_article({ "article_id": "149234567", "expected": "publish" })
 
 ## 许可
 
-MIT
+MIT，见 [LICENSE](LICENSE)。
+
+本项目派生自 [mcp-csdn-publisher](https://github.com/Ln129402/mcp-csdn-publisher)，上游版权声明按 MIT 的要求保留在 [NOTICE](NOTICE)。
+（`LICENSE` 里只放本项目自己的标准 MIT 全文——掺进派生说明会让 GitHub 的许可证识别器匹配不上，仓库侧栏会显示成 `Other`。）
