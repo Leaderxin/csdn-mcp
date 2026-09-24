@@ -1,0 +1,154 @@
+name: CI
+
+# Every branch push and every pull request. The matrix exists because the package
+# declares `engines.node >=18.17` and is published as ESM with type-only exports —
+# both of which break in interesting, Node-version-specific ways.
+on:
+  push:
+  pull_request:
+
+# A push that supersedes an in-flight run is not worth the runner minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: node ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      # One failing Node version should not hide the result of the other two.
+      fail-fast: false
+      matrix:
+        node-version: ['18.x', '20.x', '22.x']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          # Caching is keyed off package-lock.json, which is committed.
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        # `ci` (not `install`): a lockfile that disagrees with package.json must
+        # fail the build instead of being silently rewritten.
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test with coverage
+        # The 100% thresholds in vitest.config.ts make this step fail on an
+        # uncovered branch — that is the intent, not a misconfiguration.
+        run: npm run test:coverage
+
+      - name: Build
+        run: npm run build
+
+      - name: Artifact sanity check
+        # There is no --help/--version flag to probe: this is a stdio MCP server,
+        # so running it detached just blocks waiting for protocol frames. The only
+        # honest check is that the build emitted a non-empty entry point, plus the
+        # module the live smoke script (scripts/live-smoke.mjs) imports.
+        run: |
+          set -euo pipefail
+          test -f dist/index.js
+          test -s dist/index.js
+          test -s dist/context.js
+          ls -l dist/index.js dist/context.js
+
+      - name: Upload coverage report
+        # Primary leg only: the coverage numbers are identical across Node
+        # versions, so three copies would only waste storage.
+        if: matrix.node-version == '20.x'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-node-20.x
+          path: coverage/
+          # Fail loudly if coverage silently stopped being produced.
+          if-no-files-found: error
+          retention-days: 7
+
+  secret-scan:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: No credentials in tracked files
+        # This repo's whole job is handling a CSDN cookie, so the one mistake
+        # that actually matters is committing it.
+        #
+        # Implemented inline rather than with a third-party scanner so the check
+        # has no license or network dependency and can be re-run locally.
+        #
+        # The patterns are keyed on the MEASURED shape of a real CSDN cookie, not
+        # on a generic "looks like a secret" heuristic. Measurements (2026-09):
+        #   UserToken  = 32 hex characters
+        #   uuid_tt_dd = 35 characters
+        #   a whole cookie = ~1670 characters across ~38 `name=value;` pairs
+        # A first version used "any 16+ char value after UserToken=", which fired
+        # on the test fixtures (`UserToken=secret-token-value`). A scanning job
+        # that cries wolf on its own test data gets switched off, so the patterns
+        # are narrow on purpose.
+        run: |
+          set -euo pipefail
+
+          fail() { echo "::error::$1"; exit 1; }
+
+          # --- self-test: the patterns must still catch synthetic leaks --------
+          # Without this, a pattern that silently stops matching would report
+          # "clean" forever and nobody would notice. The first version of this
+          # job piped `git ls-files -z | xargs -0 grep`; xargs splits into
+          # batches, and a batch with no match makes grep exit 1, which makes the
+          # whole condition false — so a leak in ANOTHER batch was missed and the
+          # length rule was dead outright. `git grep` is one process and exits 0
+          # iff anything matched, which is what these rules assume.
+          sample_token="UserToken=$(printf 'a1b2c3d4%.0s' {1..4})"
+          if ! printf '%s\n' "$sample_token" | grep -qE "$TOKEN_RE"; then
+            fail "secret-scan self-test failed: the UserToken pattern no longer matches a real-shaped token"
+          fi
+          sample_whole="UserToken=$(printf 'a1b2c3d4%.0s' {1..4}) $(printf 'k=v; %.0s' {1..80})"
+          if ! printf '%s\n' "$sample_whole" | awk "$LONG_LINE_AWK"; then
+            fail "secret-scan self-test failed: the pasted-cookie length rule no longer fires"
+          fi
+
+          # --- 1. the .env file itself ----------------------------------------
+          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+            fail ".env is tracked by git — remove it with 'git rm --cached .env'"
+          fi
+
+          # --- 2. a populated CSDN_COOKIE literal ------------------------------
+          if git grep -qE 'CSDN_COOKIE[[:space:]]*=[[:space:]]*"?[^"[:space:]]{20,}'; then
+            fail "a populated CSDN_COOKIE literal is committed"
+          fi
+
+          # --- 3. a real-shaped token value ------------------------------------
+          # 32 hex chars for UserToken; 30+ for uuid_tt_dd. Test fixtures use
+          # short human-readable values and deliberately do not match.
+          if git grep -qE '(UserToken=[0-9a-fA-F]{32}|uuid_tt_dd=[^[:space:];"]{30,})'; then
+            fail "a real-shaped CSDN token value is committed"
+          fi
+
+          # --- 4. a whole pasted cookie header ---------------------------------
+          # A real one is ~1670 characters on one line; 400 is a deliberately
+          # generous floor so a partial paste is still caught.
+          if git grep -hE 'UserToken=' | awk "$LONG_LINE_AWK"; then
+            fail "a pasted cookie header is committed"
+          fi
+
+          echo "secret scan passed: no .env, no CSDN_COOKIE literal, no real-shaped token, no pasted cookie"
+        env:
+          TOKEN_RE: 'UserToken=[0-9a-fA-F]{32}'
+          LONG_LINE_AWK: 'length($0) > 400 { found = 1 } END { exit(found ? 0 : 1) }'

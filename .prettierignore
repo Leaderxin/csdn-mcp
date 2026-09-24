@@ -1,0 +1,9 @@
+# Never format generated or vendored output.
+dist
+coverage
+node_modules
+
+# docs/ is hand-wrapped prose: the line breaks are deliberate (they keep the
+# Chinese text readable in a diff). Prettier reflows markdown paragraphs and
+# would destroy that wrapping, so the whole directory is off limits.
+docs

@@ -1,0 +1,23 @@
+# Continue MCP server block (config.yaml format).
+#
+# Two ways to use this file:
+#   1. As a per-server block file: save it as
+#      <workspace>/.continue/mcpServers/csdn-mcp.yaml
+#      (a block file needs the `name`/`version`/`schema` header below).
+#   2. As part of the global config: append everything from `mcpServers:`
+#      downwards to ~/.continue/config.yaml and delete the three header lines,
+#      which are only required in a standalone block file.
+#
+# Continue only exposes MCP tools in agent mode.
+
+name: CSDN MCP
+version: 0.0.1
+schema: v1
+
+mcpServers:
+  - name: csdn-mcp
+    command: node
+    args:
+      - /ABSOLUTE/PATH/TO/csdn-mcp/dist/index.js
+    env:
+      CSDN_COOKIE: PASTE_YOUR_FULL_COOKIE_HEADER_HERE
