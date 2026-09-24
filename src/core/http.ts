@@ -1,0 +1,364 @@
+/**
+ * The single HTTP entry point for every CSDN call.
+ *
+ * Responsibilities, all of which exist because they were needed at least once in
+ * production:
+ *   - HMAC signing of bizapi requests (see `signer.ts`)
+ *   - timeouts, so a hung socket cannot wedge an agent session
+ *   - retry with backoff for the failures that are actually transient
+ *   - client-side throttling, so we do not trip CSDN's save-rate limiter
+ *   - one error taxonomy (`CsdnError`) instead of "code: -1 and a string"
+ *
+ * The client is fully injectable: `fetchImpl`, `sleep` and `now` are seams that
+ * make every branch above unit-testable without a network.
+ */
+
+import type { CsdnConfig } from './config.js'
+import { CsdnError, toCsdnError } from './errors.js'
+import { buildSignHeaders } from './signer.js'
+import { RateLimiter, defaultSleep, type Now, type Sleep } from './ratelimit.js'
+import { createLogger, type Logger } from './logger.js'
+
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
+
+export interface HttpResponse {
+  status: number
+  headers: { get(name: string): string | null }
+  text(): Promise<string>
+}
+
+export type FetchLike = (url: string, init: RequestInit) => Promise<HttpResponse>
+
+/** The shape of nearly every bizapi response body. */
+export interface CsdnEnvelope<T = unknown> {
+  code?: number
+  msg?: string
+  message?: string
+  data?: T
+}
+
+export type QueryValue = string | number | boolean | undefined | null
+export type QueryParams = Record<string, QueryValue>
+
+export interface RequestOptions {
+  path: string
+  method?: HttpMethod
+  query?: QueryParams
+  body?: unknown
+  /**
+   * Overrides the `Content-Type` header *and* the value folded into the
+   * signature. Pass `''` for bodyless requests. Defaults to
+   * `application/json; charset=UTF-8` when a body is present, `''` otherwise.
+   */
+  contentType?: string
+  accept?: string
+  /** Sign with the `X-Ca-*` headers. Default `true`. */
+  signed?: boolean
+  /** Throw `AUTH_MISSING` when no cookie is configured. Default `true` for signed requests. */
+  requireAuth?: boolean
+  /** Extra attempts after the first. Defaults to `config.maxRetries`. */
+  retries?: number
+  timeoutMs?: number
+  /** Minimum spacing between two calls sharing `rateLimitKey`. */
+  minIntervalMs?: number
+  /** Defaults to the request path, so saves throttle independently of reads. */
+  rateLimitKey?: string
+  /** Sent as multipart instead of JSON. Implies `signed: false`. */
+  formData?: FormData
+}
+
+export interface FetchTextOptions {
+  headers?: Record<string, string>
+  timeoutMs?: number
+}
+
+export interface TextResponse {
+  status: number
+  text: string
+  finalUrl: string
+}
+
+export interface HttpClientOptions {
+  config: CsdnConfig
+  logger?: Logger
+  fetchImpl?: FetchLike
+  sleep?: Sleep
+  now?: Now
+  rateLimiter?: RateLimiter
+}
+
+/** Serialize query params, dropping empty values, and return `''` when none remain. */
+export function buildQuery(params: QueryParams | undefined): string {
+  if (!params) return ''
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === '') continue
+    search.append(key, String(value))
+  }
+  const query = search.toString()
+  return query
+}
+
+const RATE_LIMIT_HINTS = ['频繁', '稍后', 'too many', 'rate limit', '请慢一点']
+
+function looksRateLimited(message: string): boolean {
+  const lowered = message.toLowerCase()
+  return RATE_LIMIT_HINTS.some((hint) => lowered.includes(hint.toLowerCase()))
+}
+
+/** Truncate a body snippet so a huge HTML error page cannot flood a log line. */
+function snippet(text: string, limit = 300): string {
+  const collapsed = text.replace(/\s+/g, ' ').trim()
+  return collapsed.length <= limit ? collapsed : `${collapsed.slice(0, limit)}…`
+}
+
+/** Exponential backoff: 500ms, 1s, 2s, 4s… capped at 8s. */
+export function backoffDelay(attempt: number): number {
+  return Math.min(500 * 2 ** attempt, 8_000)
+}
+
+export class CsdnHttpClient {
+  readonly config: CsdnConfig
+  readonly logger: Logger
+  private readonly fetchImpl: FetchLike
+  private readonly sleep: Sleep
+  private readonly now: Now
+  private readonly rateLimiter: RateLimiter
+
+  constructor(options: HttpClientOptions) {
+    this.config = options.config
+    this.logger = options.logger ?? createLogger({ level: options.config.logLevel })
+    this.fetchImpl = options.fetchImpl ?? ((url, init) => fetch(url, init))
+    this.sleep = options.sleep ?? defaultSleep
+    this.now = options.now ?? Date.now
+    this.rateLimiter = options.rateLimiter ?? new RateLimiter({ sleep: this.sleep, now: this.now })
+  }
+
+  /** Absolute URL for a bizapi path. */
+  url(path: string, query?: QueryParams): string {
+    const search = buildQuery(query)
+    return `${this.config.apiBase}${path}${search === '' ? '' : `?${search}`}`
+  }
+
+  /**
+   * Perform a request and return the parsed JSON body.
+   *
+   * Throws `CsdnError` for every failure mode; never returns a partial value.
+   */
+  async request<T = CsdnEnvelope>(options: RequestOptions): Promise<T> {
+    const method: HttpMethod = options.method ?? 'POST'
+    const signed = options.signed ?? true
+    const hasBody = options.body !== undefined && options.formData === undefined
+    const contentType =
+      options.contentType !== undefined
+        ? options.contentType
+        : hasBody
+          ? 'application/json; charset=UTF-8'
+          : ''
+    const accept = options.accept ?? '*/*'
+    const requireAuth = options.requireAuth ?? signed
+
+    if (requireAuth && this.config.cookie.trim() === '') {
+      throw new CsdnError('AUTH_MISSING', '未配置 CSDN Cookie，无法调用需要登录的接口')
+    }
+
+    const query = buildQuery(options.query)
+    const url = `${this.config.apiBase}${options.path}${query === '' ? '' : `?${query}`}`
+
+    const headers: Record<string, string> = {
+      Accept: accept,
+      'User-Agent': this.config.userAgent,
+      Referer: 'https://editor.csdn.net/md/',
+      Origin: 'https://editor.csdn.net'
+    }
+    if (contentType !== '') headers['Content-Type'] = contentType
+    if (signed) {
+      Object.assign(
+        headers,
+        buildSignHeaders({
+          method,
+          path: options.path,
+          query,
+          accept,
+          contentType,
+          appKey: this.config.appKey,
+          appSecret: this.config.appSecret
+        })
+      )
+    }
+    if (requireAuth) headers['Cookie'] = this.config.cookie
+
+    await this.rateLimiter.acquire(
+      options.rateLimitKey ?? `${method} ${options.path}`,
+      options.minIntervalMs ?? this.config.minRequestIntervalMs
+    )
+
+    const attempts = 1 + Math.max(0, options.retries ?? this.config.maxRetries)
+    let lastError: CsdnError | undefined
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (attempt > 0) {
+        const delay = lastError?.code === 'RATE_LIMITED' ? this.config.saveIntervalMs : backoffDelay(attempt - 1)
+        this.logger.debug('retrying request', { path: options.path, attempt, delay })
+        await this.sleep(delay)
+      }
+
+      try {
+        return await this.attempt<T>(url, method, headers, options)
+      } catch (error) {
+        const csdnError = toCsdnError(error)
+        lastError = csdnError
+        if (!csdnError.retryable || attempt === attempts - 1) throw csdnError
+      }
+    }
+
+    // Unreachable in practice: the loop either returns or throws.
+    throw lastError ?? new CsdnError('NETWORK', '请求失败')
+  }
+
+  /** `request` + envelope unwrapping: returns `data`, throws on `code !== 200`. */
+  async requestData<T>(options: RequestOptions): Promise<T> {
+    const envelope = await this.request<CsdnEnvelope<T>>(options)
+    return unwrapEnvelope<T>(envelope, options.path)
+  }
+
+  /**
+   * Fetch a public (unsigned, cookie-less) URL as text — used to check whether a
+   * post is really live, which is the only claim that cannot lie.
+   */
+  async fetchText(url: string, options: FetchTextOptions = {}): Promise<TextResponse> {
+    const controller = new AbortController()
+    const timeoutMs = options.timeoutMs ?? this.config.timeoutMs
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      const response = await this.fetchImpl(url, {
+        method: 'GET',
+        redirect: 'follow',
+        signal: controller.signal,
+        headers: {
+          'User-Agent': this.config.userAgent,
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          Referer: `${this.config.blogBase}/`,
+          ...options.headers
+        }
+      })
+      return { status: response.status, text: await response.text(), finalUrl: url }
+    } catch (error) {
+      throw toCsdnError(error)
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /** One send + parse cycle. Separated so `request` owns the retry policy. */
+  private async attempt<T>(
+    url: string,
+    method: HttpMethod,
+    headers: Record<string, string>,
+    options: RequestOptions
+  ): Promise<T> {
+    const controller = new AbortController()
+    const timeoutMs = options.timeoutMs ?? this.config.timeoutMs
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let response: HttpResponse
+    try {
+      const init: RequestInit = { method, headers, signal: controller.signal, redirect: 'follow' }
+      if (options.formData !== undefined) {
+        init.body = options.formData
+        // undici must set the multipart boundary itself, so drop our header.
+        delete headers['Content-Type']
+      } else if (options.body !== undefined) {
+        init.body = JSON.stringify(options.body)
+      }
+      response = await this.fetchImpl(url, init)
+    } catch (error) {
+      throw toCsdnError(error)
+    } finally {
+      clearTimeout(timer)
+    }
+
+    const text = await response.text().catch((error: unknown) => {
+      throw toCsdnError(error)
+    })
+
+    if (response.status === 401 || response.status === 403) {
+      throw new CsdnError('AUTH_INVALID', `CSDN 拒绝请求（HTTP ${response.status}），Cookie 可能已过期`, {
+        status: response.status,
+        detail: snippet(text)
+      })
+    }
+    if (response.status === 429) {
+      throw new CsdnError('RATE_LIMITED', 'CSDN 限流（HTTP 429）', { status: 429, detail: snippet(text) })
+    }
+    if (response.status >= 500) {
+      throw new CsdnError('SERVER_ERROR', `CSDN 服务端错误（HTTP ${response.status}）`, {
+        status: response.status,
+        detail: snippet(text)
+      })
+    }
+    if (response.status < 200 || response.status >= 300) {
+      throw new CsdnError('HTTP_ERROR', `请求失败（HTTP ${response.status}）`, {
+        status: response.status,
+        detail: snippet(text)
+      })
+    }
+
+    const parsed = parseJsonBody<T>(text)
+    return parsed
+  }
+}
+
+/**
+ * Parse a response body as JSON.
+ *
+ * A non-JSON 2xx almost always means the endpoint moved: bizapi returns the
+ * `openresty` 404 page with status 200, which is how both `list-categories` and
+ * `list-tags` in v0 silently rotted.
+ */
+export function parseJsonBody<T>(text: string): T {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    throw new CsdnError('MALFORMED_RESPONSE', '接口返回的不是 JSON，通常意味着该接口已下线或路径变更', {
+      detail: snippet(trimmed)
+    })
+  }
+  try {
+    return JSON.parse(trimmed) as T
+  } catch (error) {
+    throw new CsdnError('MALFORMED_RESPONSE', '接口返回的 JSON 无法解析', {
+      detail: snippet(trimmed),
+      cause: error
+    })
+  }
+}
+
+/**
+ * Unwrap a `{code, msg, data}` envelope.
+ *
+ * `code === 200` is the only success. Note that a rejected request can still
+ * arrive with HTTP 200, which is why the envelope is checked separately from the
+ * status code.
+ */
+export function unwrapEnvelope<T>(envelope: CsdnEnvelope<T>, context = ''): T {
+  const code = envelope.code ?? 200
+  if (code === 200) {
+    if (envelope.data === undefined) {
+      // Callers that expect data treat `undefined` as a protocol violation.
+      return undefined as T
+    }
+    return envelope.data
+  }
+  const message = envelope.msg ?? envelope.message ?? `接口返回 code=${code}`
+  const where = context === '' ? '' : `（${context}）`
+  if (code === 401 || code === 403 || code === 700) {
+    throw new CsdnError('AUTH_INVALID', `${message}${where}`, { detail: message })
+  }
+  if (code === 404 || code === 4004) {
+    throw new CsdnError('NOT_FOUND', `${message}${where}`, { detail: message })
+  }
+  if (looksRateLimited(message)) {
+    throw new CsdnError('RATE_LIMITED', `${message}${where}`, { detail: message })
+  }
+  throw new CsdnError('API_ERROR', `${message}${where}`, { detail: message })
+}

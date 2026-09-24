@@ -1,16 +1,45 @@
 {
   "name": "csdn-mcp",
-  "version": "0.1.0",
-  "description": "MCP server for CSDN — let any AI agent publish, query and manage your blog posts.",
+  "version": "1.0.0",
+  "description": "MCP server for CSDN — let any AI agent publish, query, edit and manage blog posts.",
   "type": "module",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    }
+  },
   "bin": {
     "csdn-mcp": "./dist/index.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
-    "dev": "tsc --watch"
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:live": "CSDN_LIVE=1 vitest run --config vitest.live.config.ts",
+    "lint": "eslint . --ext .ts",
+    "format": "prettier --write \"{src,tests}/**/*.ts\" \"*.md\" \"docs/**/*.md\"",
+    "format:check": "prettier --check \"{src,tests}/**/*.ts\" \"*.md\" \"docs/**/*.md\"",
+    "verify": "npm run typecheck && npm run lint && npm run test:coverage && npm run build",
+    "prepublishOnly": "npm run verify"
   },
   "keywords": [
     "mcp",
@@ -19,18 +48,26 @@
     "blog",
     "publisher",
     "ai",
+    "agent",
     "claude",
-    "cursor"
+    "cursor",
+    "cline"
   ],
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
-    "marked": "^18.0.12",
+    "marked": "^15.0.0",
     "zod": "^3.24.4"
   },
   "devDependencies": {
     "@types/node": "^22.15.2",
-    "typescript": "^5.8.3"
+    "@typescript-eslint/eslint-plugin": "^8.30.0",
+    "@typescript-eslint/parser": "^8.30.0",
+    "@vitest/coverage-v8": "^2.1.9",
+    "eslint": "^8.57.1",
+    "prettier": "^3.4.2",
+    "typescript": "^5.8.3",
+    "vitest": "^2.1.9"
   },
   "repository": {
     "type": "git",
