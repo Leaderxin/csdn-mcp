@@ -64,7 +64,7 @@ class ArticleClient {
   constructor(deps: { http: CsdnHttpClient; config: CsdnConfig; logger?: Logger })
   save(input: SaveArticleInput): Promise<SaveArticleResult>
   get(articleId: string): Promise<ArticleDetail>
-  list(params?: { page?: number; pageSize?: number }): Promise<ArticleListPage>
+  list(params?: { page?: number; pageSize?: number; scope?: 'published' | 'all' }): Promise<ArticleListPage>
   remove(articleId: string, permanent?: boolean): Promise<DeleteArticleResult>
 }
 ```
@@ -175,7 +175,7 @@ holds the same object) picks up the new value immediately.
 | `publish_article` | `title`, `markdown` | `description`, `tags`, `categories`, `cover_image`, `mode`, `verify` | `{ articleId, url, state, verification? }` |
 | `update_article` | `article_id` | `title`, `markdown`, `description`, `tags`, `categories`, `cover_image`, `mode` | `{ articleId, url, state }` |
 | `get_article` | `article_id` | `include_content` | `ArticleDetail` |
-| `list_articles` | — | `page`, `page_size` | `ArticleListPage` |
+| `list_articles` | — | `page`, `page_size`, `scope` | `ArticleListPage` |
 | `delete_article` | `article_id` | `permanent` | `{ articleId, permanent }` |
 | `upload_image` | `path`, `kind` | — | `UploadedImage` |
 | `list_categories` | — | — | `{ items, source }` |

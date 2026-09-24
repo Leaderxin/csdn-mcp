@@ -39,19 +39,19 @@ npm run build
 
 11 个工具，全部走 stdio。参数、返回结构、错误码的完整定义见 [docs/TOOLS.md](docs/TOOLS.md)。
 
-| 工具              | 说明                                                            |
-| ----------------- | --------------------------------------------------------------- |
-| `auth_login`      | 运行期设置 Cookie，随后所有请求立即生效，无需重启进程           |
-| `auth_status`     | 检查当前 Cookie 是否已配置、格式是否合法、账号名是什么          |
-| `publish_article` | 新建文章；`mode` 默认 `draft`，发布必须显式传 `mode: "publish"` |
-| `update_article`  | 更新已有文章；改标题/标签/摘要/封面 + 草稿副本                  |
-| `get_article`     | 按 ID 读取单篇文章，可选是否带正文                              |
-| `list_articles`   | 列出**已公开**文章（分页）；草稿不在其中                        |
-| `delete_article`  | 删除文章，默认进回收站，`permanent: true` 彻底删除              |
-| `upload_image`    | 上传本地图片，返回公网 URL，分 `cover` / `body` 两条通道        |
-| `list_categories` | 列出文章分类；接口不可用时回退到内置列表                        |
-| `list_tags`       | 列出常用标签；接口不可用时回退到内置列表                        |
-| `verify_article`  | 回查 API 状态 + 公开页 HTTP 码，确认文章真实状态                |
+| 工具              | 说明                                                                 |
+| ----------------- | -------------------------------------------------------------------- |
+| `auth_login`      | 运行期设置 Cookie，随后所有请求立即生效，无需重启进程                |
+| `auth_status`     | 检查当前 Cookie 是否已配置、格式是否合法、账号名是什么               |
+| `publish_article` | 新建文章；`mode` 默认 `draft`，发布必须显式传 `mode: "publish"`      |
+| `update_article`  | 更新已有文章；改标题/标签/摘要/封面 + 草稿副本                       |
+| `get_article`     | 按 ID 读取单篇文章，可选是否带正文                                   |
+| `list_articles`   | 列出文章；`scope=published` 只看已发布，`scope=all` 含草稿与分类计数 |
+| `delete_article`  | 删除文章，默认进回收站，`permanent: true` 彻底删除                   |
+| `upload_image`    | 上传本地图片，返回公网 URL，分 `cover` / `body` 两条通道             |
+| `list_categories` | 列出文章分类；接口不可用时回退到内置列表                             |
+| `list_tags`       | 列出常用标签；接口不可用时回退到内置列表                             |
+| `verify_article`  | 回查 API 状态 + 公开页 HTTP 码，确认文章真实状态                     |
 
 ## 一次真实的 Agent 调用流程
 

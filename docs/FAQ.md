@@ -72,9 +72,11 @@ upload_image({ "path": "/path/to/图.png", "kind": "body" })
 
 ## 为什么存了草稿，`list_articles` 里没有？
 
-因为那篇是草稿。`list_articles` 走**公开**社区接口，只列已发布文章，而且不需要 Cookie——草稿不在里面不是过滤条件的问题，是接口本身不给。
+因为默认的 `scope: "published"` 走的是**公开**社区接口，只列已发布文章，而且不需要 Cookie——草稿不在里面不是过滤条件的问题，是接口本身不给。
 
-要查草稿用 `get_article`，传 `article_id`。
+**要看草稿，加 `scope: "all"`**：它会走作者后台接口（需要 Cookie），返回里含草稿，`state` 字段区分 `draft` / `published` / `reviewing`，`counts` 还会给出 `{draft: 2, publish: 26, ...}` 的计数。实测同一账号 `published` 回 24 篇、`all` 回 26 篇，多出来的正是 2 篇草稿。
+
+已知某一篇的确切 ID 时，`get_article` 更省事。
 
 ## 文章状态 `6` 和 `16` 是什么意思？
 
@@ -107,7 +109,7 @@ upload_image({ "path": "/path/to/图.png", "kind": "body" })
 明确列一下，免得试：
 
 - 通过 API 修改**已发布文章**的正文（只能在 CSDN 编辑器 UI 里改）。
-- 列出草稿（`list_articles` 只有公开文章）。
+- 按关键词搜索文章、按状态过滤文章（`scope: "all"` 能列出草稿并按页翻，但没有服务端搜索与过滤）。
 - 获取阅读量趋势、评论、粉丝、收益等分析数据——只读得到单篇/列表里的 `viewCount`、`diggCount`、`collectCount`、`commentCount` 这类计数字段。
 - 自动把 Markdown 里的外链图片转存到 CSDN。
 - 把已发布的文章退回草稿（`status` 写反了之后 API 回不去，只能删掉重建）。

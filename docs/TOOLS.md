@@ -7,7 +7,7 @@ v1.0.0 的工具面是**冻结**的（`docs/ARCHITECTURE.md` §4）：11 个工�
 - 参数用 zod 校验，**不可行的输入在任何网络请求之前就被拒绝**，返回 `INVALID_ARGUMENT`。
 - 成功返回是一个 `text` 内容块：**一行人类可读的摘要** + 一个 ```` ```json ```` 代码块（payload）。摘要给人看，代码块给程序解析，两者都在同一个块里。
 - 失败返回 `{ "isError": true, "content": [...] }`，文本里带错误 `code`。不会把原始异常堆栈丢给 MCP 宿主。
-- 所有 `*_article` / `upload_image` / 元数据工具都需要 `CSDN_COOKIE`（`list_articles` 除外，它走公开接口）。
+- 所有 `*_article` / `upload_image` / 元数据工具都需要 `CSDN_COOKIE`（`list_articles` 默认的 `scope: "published"` 除外，它走公开接口；`scope: "all"` 需要 Cookie）。
 - 字段名是 camelCase（`articleId`、`pageSize`、`publicStatusCode`）。**参数名是 snake_case**（`article_id`、`page_size`、`cover_image`）——这两套命名不要互相套用。
 
 ### 通用错误码（所有联网工具都可能返回）
@@ -275,16 +275,30 @@ Cookie 内容本身**永远不会**出现在返回值里。
 
 ## list_articles
 
-列出**已公开**的文章。走公开社区接口，**不需要 Cookie**。
+列出账号的文章。`scope` 决定走哪个接口，两者的可见范围不同。
 
 **参数**
 
 | 名称 | 类型 | 必填 | 约束 |
 |---|---|---|---|
 | `page` | number | 否 | 页码，从 1 开始，默认 `1` |
-| `page_size` | number | 否 | 每页条数，默认 `20`，**上限 `100`** |
+| `page_size` | number | 否 | 每页条数，默认 `20`，**上限 `100`**。`scope=all` 时可能被服务端忽略，见下 |
+| `scope` | string | 否 | `published`（默认）或 `all` |
 
-越界（`page < 1` 或 `page_size > 100`）在发请求之前就被 `INVALID_ARGUMENT` 拦下。
+越界（`page < 1`、`page_size > 100`，或 `scope` 不是这两个值）在发请求之前就被 `INVALID_ARGUMENT` 拦下。
+
+**两个 scope 的区别**
+
+| | `scope: "published"`（默认） | `scope: "all"` |
+|---|---|---|
+| 接口 | 公开社区接口 `/community/home-api/v1/get-business-list` | 作者后台 `/blog/phoenix/console/v1/article/list` |
+| 凭证 | **无需 Cookie / 签名**（带上反而 403） | 需要 Cookie + 签名 |
+| 可见范围 | **只有已发布**，草稿永远不出现 | **全部状态，含草稿** |
+| `counts` | 无 | 有：`{all, draft, publish, private, deleted, audit, ...}` |
+| 每条带的 `status`/`state` | 无（都是已发布，没有区分必要） | 有 |
+| 每页条数 | 按 `page_size` | **服务端固定，`page_size` 会被忽略** |
+
+> **`scope=all` 是唯一能回答「我有哪些草稿」的口径。** 公开接口看不到草稿，`get_article` 又要先知道 ID——agent 建完草稿若丢了 ID，只有这条路径能把它找回来。
 
 **成功返回**（`ArticleListPage`）
 
@@ -307,20 +321,55 @@ Cookie 内容本身**永远不会**出现在返回值里。
   ],
   "page": 1,
   "pageSize": 20,
-  "total": 1
+  "total": 1,
+  "scope": "published"
 }
 ```
 
+`scope: "all"` 时每条额外带两个字段，并按此多出 `counts`：
+
+```json
+{
+  "items": [
+    {
+      "id": "103343553",
+      "title": "还没写完的草稿",
+      "url": "https://blog.csdn.net/Leaderxin/article/details/103343553",
+      "state": "draft",
+      "statusCode": 2,
+      "viewCount": 1,
+      "tags": [],
+      "description": ""
+    }
+  ],
+  "page": 1,
+  "pageSize": 20,
+  "total": 26,
+  "scope": "all",
+  "counts": { "all": 26, "draft": 2, "publish": 26, "deleted": 0 }
+}
+```
+
+**`scope: "all"` 的三个实测注意点**
+
+1. **`page_size` 会被忽略**：该接口把每页条数固定在服务端（实测恒为 20），传 `5` 也回 20 条。返回的 `pageSize` 是**服务端实际使用的值**，不是你请求的值——所以别用 `items.length < page_size` 去判断「最后一页」。
+2. **`counts` 缺省时字段整个不出现**，而不是 `{}`。看到没有 `counts` 键代表「这个接口这次没报」，不代表「草稿数为 0」。
+3. 该接口的计数是**带引号的字符串**（`"viewCount": "1"`），已按数字解析。`status` 无法解析时映射为 `state: "unknown"` 而**不是** `published`。
+
 **错误码**
 
-`INVALID_ARGUMENT`（分页参数越界）、`MALFORMED_RESPONSE`、`API_ERROR`、`HTTP_ERROR`、`NETWORK`、`TIMEOUT`、`SERVER_ERROR`。
+`INVALID_ARGUMENT`（分页/scope 越界）、`MALFORMED_RESPONSE`、`API_ERROR`、`HTTP_ERROR`、`NETWORK`、`TIMEOUT`、`SERVER_ERROR`。
 
-**重要限制**：**草稿不会出现在这里**。公开接口只列已发布内容，这是接口本身的性质，不是过滤参数。刚保存的草稿查不到属于预期行为，要用 `get_article` 按 ID 查。另外这个接口是匿名的——服务侧**不会**给它带 Cookie 或签名，带上反而会被拒（403）。
+**重要限制**：`scope: "published"` 下**草稿不会出现**——这是接口本身的性质，不是过滤参数。刚保存的草稿查不到属于预期，要用 `scope: "all"` 或 `get_article` 按 ID 查。
 
 **示例**
 
 ```json
 { "name": "list_articles", "arguments": { "page": 1, "page_size": 10 } }
+```
+
+```json
+{ "name": "list_articles", "arguments": { "scope": "all", "page": 1 } }
 ```
 
 ---

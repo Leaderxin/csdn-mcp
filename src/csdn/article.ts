@@ -17,6 +17,7 @@ import {
   articleUrl,
   type ArticleDetail,
   type ArticleListPage,
+  type ArticleListScope,
   type ArticleSummary,
   type DeleteArticleResult,
   type SaveArticleInput,
@@ -37,6 +38,16 @@ const GET_ARTICLE_PATH = '/blog-console-api/v1/editor/getArticle'
  * exactly why `get()` (the console API) exists next to it.
  */
 const LIST_ARTICLES_PATH = '/community/home-api/v1/get-business-list'
+
+/**
+ * The author's own back office list — the only endpoint that shows drafts.
+ *
+ * Signed and cookie-bearing, unlike `LIST_ARTICLES_PATH` above. Two measured
+ * behaviours are relied on here: it pins its page size server-side (it ignores
+ * the `size` it is given and echoes its own back), and it reports per-state
+ * tallies under `count`.
+ */
+const CONSOLE_LIST_PATH = '/blog/phoenix/console/v1/article/list'
 
 /** Console endpoint that recycles an article, or deletes it for good. */
 const DELETE_ARTICLE_PATH = '/blog/phoenix/console/v1/article/del'
@@ -77,6 +88,13 @@ const MAX_DESCRIPTION_LENGTH = 256
 const DEFAULT_PAGE = 1
 const DEFAULT_PAGE_SIZE = 20
 const MAX_PAGE_SIZE = 100
+
+/**
+ * `published` keeps the pre-`scope` behaviour byte for byte: the public list is
+ * the cheaper call and needs no credentials, so it stays the default and an
+ * existing caller sees no change.
+ */
+const DEFAULT_LIST_SCOPE: ArticleListScope = 'published'
 
 /**
  * Stand-in for a `status` we could not read. It is absent from
@@ -247,9 +265,12 @@ export class ArticleClient {
    * Drafts never appear here — the community API has no notion of them — so a
    * caller that must see a draft has to use `get()` on its id.
    */
-  async list(params: { page?: number; pageSize?: number } = {}): Promise<ArticleListPage> {
+  async list(
+    params: { page?: number; pageSize?: number; scope?: ArticleListScope } = {}
+  ): Promise<ArticleListPage> {
     const page = params.page ?? DEFAULT_PAGE
     const pageSize = params.pageSize ?? DEFAULT_PAGE_SIZE
+    const scope = params.scope ?? DEFAULT_LIST_SCOPE
     // `!(x >= 1)` rather than `x < 1` so that NaN is rejected too. Integer-ness
     // is already enforced by the tool layer's zod schema.
     if (!(page >= 1)) {
@@ -258,7 +279,20 @@ export class ArticleClient {
     if (!(pageSize >= 1) || pageSize > MAX_PAGE_SIZE) {
       throw new CsdnError('INVALID_ARGUMENT', `pageSize 必须在 1..${MAX_PAGE_SIZE} 之间，收到 ${pageSize}`)
     }
+    if (scope !== 'published' && scope !== 'all') {
+      throw new CsdnError('INVALID_ARGUMENT', `scope 只能是 published 或 all，收到 ${String(scope)}`)
+    }
 
+    return scope === 'all' ? this.listFromConsole(page, pageSize) : this.listPublished(page, pageSize)
+  }
+
+  /**
+   * The public community list: published articles only, no cookie, no signature.
+   *
+   * Drafts never appear here — that is the endpoint's nature, not a bug — which
+   * is why `listFromConsole` exists and why `get` takes an id.
+   */
+  private async listPublished(page: number, pageSize: number): Promise<ArticleListPage> {
     const envelope = await this.http.request<CsdnEnvelope<unknown>>({
       method: 'GET',
       // Absolute URL from `communityBase`, not the relative path: every request
@@ -280,7 +314,43 @@ export class ArticleClient {
       items: Array.isArray(entries) ? entries.map(toArticleSummary) : [],
       page,
       pageSize,
-      total: asCount(record['total'])
+      total: asCount(record['total']),
+      scope: 'published'
+    }
+  }
+
+  /**
+   * The author console: every state, drafts included. Signed and cookie-bearing,
+   * because it is the author's own back office rather than a public feed.
+   *
+   * Two measured quirks live here, both verified 2026-09:
+   *
+   *  - The endpoint pins the page size server-side and **ignores the `size` it
+   *    is given** (requesting 5 returned 20). The response echoes its own
+   *    `size`, so that echo is reported as `pageSize`: the caller is told what
+   *    it actually got rather than what it asked for.
+   *  - Its per-state tallies arrive under `count`, which is the only way to ask
+   *    "how many drafts do I have" without paging through everything.
+   */
+  private async listFromConsole(page: number, pageSize: number): Promise<ArticleListPage> {
+    const envelope = await this.http.request<CsdnEnvelope<unknown>>({
+      method: 'GET',
+      path: CONSOLE_LIST_PATH,
+      query: { page, size: pageSize }
+    })
+    const record = asRecord(unwrapEnvelope<unknown>(envelope, CONSOLE_LIST_PATH))
+    const entries = record['list']
+    const counts = toCounts(record['count'])
+    const effectivePageSize = toCount(record['size'])
+
+    return {
+      items: Array.isArray(entries) ? entries.map(entry => toConsoleSummary(entry, this.config)) : [],
+      page: toCount(record['page']) || page,
+      // Fall back to the request only when the server declined to echo one.
+      pageSize: effectivePageSize > 0 ? effectivePageSize : pageSize,
+      total: toCount(record['total']),
+      scope: 'all',
+      ...(counts === undefined ? {} : { counts })
     }
   }
 
@@ -345,6 +415,25 @@ function asCount(value: unknown): number {
 }
 
 /**
+ * Counters for the console payloads, which quote their numbers.
+ *
+ * The author console sends `viewCount: "1"`, `status: "2"`, `size: 20` as
+ * **strings**, while the public community list sends real numbers. `asCount`
+ * deliberately treats a string as absent — correct for the public payload, and
+ * silently zero for every console counter — so console fields go through this
+ * instead. Verified against the live payload: quoting every counter to 0 is the
+ * kind of bug that reads as "no views yet" rather than as a failure.
+ */
+function toCount(value: unknown): number {
+  if (typeof value === 'number') return value
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10)
+    return Number.isNaN(parsed) ? 0 : parsed
+  }
+  return 0
+}
+
+/**
  * Parse the `status` field. `articleStateFromCode` accepts a string because
  * some console responses quote the code, so the quoting is undone here.
  */
@@ -398,4 +487,51 @@ function toArticleSummary(entry: unknown): ArticleSummary {
     commentCount: asCount(record['commentCount']),
     raw: record
   }
+}
+
+/**
+ * Map one entry from the author console list.
+ *
+ * This is deliberately a separate mapper from `toArticleSummary`: the console
+ * sends a different shape. There is no `url`, no `tags` and no `description`,
+ * every counter is a **quoted** number, and only here does a `status` come back.
+ * The URL is rebuilt from the account name so that a console row is still
+ * something you can open and check.
+ */
+function toConsoleSummary(entry: unknown, config: CsdnConfig): ArticleSummary {
+  const record = asRecord(entry)
+  const id = asText(record['articleId'])
+  const statusCode = toStatusCode(record['status'])
+  return {
+    id,
+    title: asText(record['title']),
+    // Keep the endpoint's own url if CSDN ever adds one; build it otherwise.
+    url: asText(record['url']) || articleUrl(config.userName, id, config.blogBase),
+    // The console list carries neither, and inventing them would be worse than
+    // reporting them empty — `get` has the real description when it matters.
+    description: '',
+    tags: [],
+    postTime: asText(record['postTime']),
+    viewCount: toCount(record['viewCount']),
+    diggCount: toCount(record['diggCount']),
+    collectCount: toCount(record['collectCount']),
+    commentCount: toCount(record['commentCount']),
+    statusCode,
+    state: articleStateFromCode(statusCode),
+    raw: record
+  }
+}
+
+/**
+ * CSDN's per-state tallies (`count: { all, draft, publish, deleted, ... }`).
+ *
+ * `undefined` when the field is absent, so the caller omits the key entirely
+ * rather than reporting `{}` — an empty object would read as "zero drafts"
+ * instead of "this endpoint did not say".
+ */
+function toCounts(value: unknown): Record<string, number> | undefined {
+  if (!isRecord(value)) return undefined
+  const out: Record<string, number> = {}
+  for (const [key, entry] of Object.entries(value)) out[key] = toCount(entry)
+  return out
 }

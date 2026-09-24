@@ -149,10 +149,20 @@ interface DetailPayload {
 }
 
 interface ListPayload {
-  items: Array<{ id: string; title: string; url: string; tags: string[]; viewCount: number }>
+  items: Array<{
+    id: string
+    title: string
+    url: string
+    tags: string[]
+    viewCount: number
+    state?: string
+    statusCode?: number
+  }>
   page: number
   pageSize: number
   total: number
+  scope: string
+  counts?: Record<string, number>
 }
 
 interface VerificationPayload {
@@ -269,6 +279,72 @@ describe('list_articles', () => {
     const url = h.fake.requests[0]?.url ?? ''
     expect(url).toContain('page=1')
     expect(url).toContain('size=20')
+    await h.close()
+  })
+
+  it('defaults to scope published, so an existing caller sees no change', async () => {
+    const h = await harness([LIST_BODY])
+    const result = await h.call('list_articles')
+
+    expect(h.fake.requests[0]?.url).toContain('/community/home-api/v1/get-business-list')
+    expect(jsonOf<ListPayload>(result).scope).toBe('published')
+    await h.close()
+  })
+
+  it('scope=all reaches the author console and reports drafts, which the public list cannot', async () => {
+    const h = await harness([
+      {
+        status: 200,
+        body: {
+          code: 200,
+          data: {
+            total: 26,
+            page: 1,
+            size: 20,
+            count: { all: 26, draft: 2, publish: 26 },
+            list: [
+              {
+                articleId: '103343553',
+                title: '草稿一篇',
+                postTime: '2020-01-03 15:44:36',
+                viewCount: '1',
+                status: '2'
+              }
+            ]
+          }
+        }
+      }
+    ])
+
+    const result = await h.call('list_articles', { scope: 'all' })
+    const request = h.fake.requests[0]
+
+    expect(request?.url).toContain('/blog/phoenix/console/v1/article/list')
+    // The console endpoint is authenticated, unlike the public one.
+    expect(request?.headers['Cookie']).toBeDefined()
+    expect(request?.headers['X-Ca-Signature']).toBeDefined()
+
+    const payload = jsonOf<ListPayload>(result)
+    expect(payload.scope).toBe('all')
+    expect(payload.counts).toEqual({ all: 26, draft: 2, publish: 26 })
+    expect(payload.items[0]?.state).toBe('draft')
+
+    // The human-readable line must not tell an agent "草稿查不到" when it is
+    // looking at a list that contains one.
+    const text = textOf(result)
+    expect(text).not.toContain('草稿查不到')
+    expect(text).toContain('包含草稿')
+    expect(text).toContain('draft=2')
+    await h.close()
+  })
+
+  it('rejects an out-of-range scope through the zod schema without any request', async () => {
+    const h = await harness([LIST_BODY])
+    const result = await h.call('list_articles', { scope: 'everything' })
+
+    expect(result.isError).toBe(true)
+    expect(textOf(result)).toContain('published')
+    expect(h.fake.requests).toHaveLength(0)
     await h.close()
   })
 })

@@ -14,7 +14,7 @@
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
-import type { ArticleListPage } from '../csdn/types.js'
+import type { ArticleListPage, ArticleListScope } from '../csdn/types.js'
 import { verifyArticle } from '../csdn/verify.js'
 import type { ServerContext } from '../context.js'
 import { asCallToolResult, errorResult, jsonResult, type ToolResult } from './shared.js'
@@ -61,13 +61,32 @@ export async function getArticle(
 
 export async function listArticles(
   ctx: ServerContext,
-  args: { page?: number; page_size?: number }
+  args: { page?: number; page_size?: number; scope?: ArticleListScope }
 ): Promise<ToolResult> {
   try {
-    const page: ArticleListPage = await ctx.articles.list({ page: args.page, pageSize: args.page_size })
+    const page: ArticleListPage = await ctx.articles.list({
+      page: args.page,
+      pageSize: args.page_size,
+      scope: args.scope
+    })
+    // The two scopes see different sets, so the message must say which one
+    // answered. An agent that asked for drafts and reads "只含已发布文章" would
+    // conclude its draft is missing when it simply asked the wrong endpoint.
+    const scopeNote =
+      page.scope === 'all'
+        ? '这是作者后台接口，包含草稿（item.state 里区分 draft/published/reviewing）；' +
+          `CSDN 后台页大小由服务端固定，本次实际每页 ${page.pageSize} 篇`
+        : '这是公开接口，只含已发布文章，草稿查不到（草稿用 list_articles 的 scope=all，或 get_article 按 id 查）'
+    const countsNote =
+      page.counts === undefined
+        ? ''
+        : `；CSDN 分类计数 ${Object.entries(page.counts)
+            .map(([key, value]) => `${key}=${value}`)
+            .join(', ')}`
+
     return jsonResult(
       `已列出第 ${page.page} 页（每页 ${page.pageSize}）：本页 ${page.items.length} 篇，共 ${page.total} 篇；` +
-        '这是公开接口，只含已发布文章，草稿查不到（草稿用 get_article 按 id 查）',
+        `${scopeNote}${countsNote}`,
       page
     )
   } catch (error) {
@@ -127,14 +146,23 @@ export function registerReadTools(server: McpServer, ctx: ServerContext): void {
   server.registerTool(
     'list_articles',
     {
-      title: '列出已发布文章',
+      title: '列出文章',
       description:
-        '列出账号已公开发布的文章（公开接口，不需要 Cookie，也不需要登录）。' +
-        '**草稿不会出现在这里**，这是接口本身的性质：刚保存的草稿查不到属于预期，要看草稿请用 get_article 按 id 查。' +
+        '列出账号的文章。scope="published"（默认）走公开接口、不需要 Cookie，**只含已发布文章**；' +
+        'scope="all" 走作者后台接口、需要 Cookie，**包含草稿**，并在 counts 里给出 draft/publish 等分类计数——' +
+        '这是唯一能回答「我有哪些草稿」的口径（公开接口看不到草稿，get_article 又要先知道 id）。' +
+        '注意后台接口的每页条数由 CSDN 服务端固定，page_size 传入后可能被忽略，返回的 pageSize 是实际值。' +
         '不要用它判断某篇文章是否发布成功——看不到不等于没发布，请用 verify_article。',
       inputSchema: {
         page: z.number().int().min(1, 'page 从 1 开始').optional(),
-        page_size: z.number().int().min(1, 'page_size 至少为 1').max(100, 'page_size 最大 100').optional()
+        page_size: z.number().int().min(1, 'page_size 至少为 1').max(100, 'page_size 最大 100').optional(),
+        scope: z
+          .enum(['published', 'all'], {
+            errorMap: () => ({
+              message: 'scope 只能是 published（公开接口，只看已发布）或 all（作者后台，含草稿）'
+            })
+          })
+          .optional()
       }
     },
     async args => asCallToolResult(await listArticles(ctx, args))

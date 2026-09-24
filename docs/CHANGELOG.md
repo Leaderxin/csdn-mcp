@@ -12,6 +12,7 @@
 
 ### Added
 
+- **`list_articles` 新增 `scope` 参数**：`published`（默认，公开接口，只看已发布，行为与从前完全一致）或 `all`（作者后台接口，**含草稿**，并给出 `counts: {draft, publish, ...}` 分类计数）。补上这个参数是因为原先**没有任何办法发现草稿的 ID**——公开接口看不到草稿，`get_article` 又要先知道 ID，agent 建完草稿一旦丢了 ID 就再也找不回来。实测：`published` 返 24 篇、`all` 返 26 篇，多出来的正好是 2 篇草稿。
 - **工具面补齐到 11 个**：`auth_login`、`auth_status`、`publish_article`、`update_article`、`get_article`、`list_articles`、`delete_article`、`upload_image`、`list_categories`、`list_tags`、`verify_article`。新增的原能力：更新已有文章、读取单篇/列表、删除（回收站或彻底删除）、图片上传、分类与标签、账号状态。
 - **图片上传链路改为两步**：`POST /resource-api/v1/image/direct/upload/signature` 取凭据 + multipart 直传到第三方对象存储（华为 OBS / 阿里云 OSS），区分 `body`（`direct_blog`）与 `cover`（`direct_blog_coverimage`）两条通道；正文图片支持 `IMG_*` 占位符，替换前一次性报出所有缺映射的占位符，避免"上传成功、发布失败"的半成品状态。
 - **写入后自检**：`publish_article` / `update_article` 默认回查 `getArticle.status` **和**公开页 HTTP 码，两者都一致才算成功。

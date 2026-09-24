@@ -518,13 +518,176 @@ describe('ArticleClient.list', () => {
   it('returns an empty page when the account has published nothing', async () => {
     const { client } = setup([okEnvelope(null)])
 
-    await expect(client.list()).resolves.toEqual({ items: [], page: 1, pageSize: 20, total: 0 })
+    await expect(client.list()).resolves.toEqual({
+      items: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+      scope: 'published'
+    })
   })
 
   it('surfaces a community API error envelope as API_ERROR', async () => {
     const { client } = setup([apiErrorEnvelope(10002, '系统繁忙')])
 
     await expect(client.list()).rejects.toMatchObject({ code: 'API_ERROR' })
+  })
+
+  it('rejects an unknown scope before any request', async () => {
+    const { client, fake } = setup([okEnvelope({ list: [], total: 0 })])
+
+    // Cast through `never`: the tool layer's zod schema rules this out, but the
+    // client is also callable directly (the smoke scripts do exactly that).
+    await expect(client.list({ scope: 'everything' as never })).rejects.toMatchObject({
+      code: 'INVALID_ARGUMENT'
+    })
+    expect(fake.requests).toHaveLength(0)
+  })
+})
+
+describe('ArticleClient.list with scope "all"', () => {
+  /** One console row, exactly as CSDN sends it: counters quoted, no url/tags. */
+  const consoleRow = {
+    articleId: '103343553',
+    title: '一篇还没写完的草稿',
+    postTime: '2020-01-03 15:44:36',
+    viewCount: '1',
+    commentCount: '0',
+    diggCount: '7',
+    collectCount: '2',
+    status: '2',
+    username: 'alice'
+  }
+
+  it('adds a Cookie and a signature, unlike the public list', async () => {
+    const { client, fake } = setup([okEnvelope({ list: [], total: 0, page: 1, size: 20 })])
+
+    await client.list({ scope: 'all' })
+
+    const request = fake.last()
+    expect(request.url).toContain('/blog/phoenix/console/v1/article/list')
+    expect(request.url).not.toContain('businessType')
+    const headers = lowerHeaders(request.headers)
+    expect(headers).toHaveProperty('cookie')
+    expect(Object.keys(headers).some(name => name.startsWith('x-ca-'))).toBe(true)
+  })
+
+  it('reports drafts, mapping the quoted status code to a state', async () => {
+    const { client } = setup([okEnvelope({ list: [consoleRow], total: 26, page: 1, size: 20 })])
+
+    const page = await client.list({ scope: 'all' })
+
+    expect(page.scope).toBe('all')
+    expect(page.total).toBe(26)
+    expect(page.items).toHaveLength(1)
+    expect(page.items[0]).toMatchObject({
+      id: '103343553',
+      title: '一篇还没写完的草稿',
+      state: 'draft',
+      statusCode: 2,
+      // Quoted counters must be parsed, not dropped to 0 — `asCount` treats any
+      // string as absent, which is right for the public payload and wrong here.
+      viewCount: 1,
+      diggCount: 7,
+      collectCount: 2,
+      commentCount: 0,
+      // The console sends no url and no tags; the url is rebuilt from the account.
+      url: 'https://blog.csdn.net/alice/article/details/103343553',
+      tags: [],
+      description: ''
+    })
+  })
+
+  it('passes through CSDN per-state counts, which is the only draft tally available', async () => {
+    const { client } = setup([
+      okEnvelope({
+        list: [consoleRow],
+        total: 26,
+        page: 1,
+        size: 20,
+        count: { all: 26, draft: 2, publish: 26, deleted: '0', audit: 0 }
+      })
+    ])
+
+    const page = await client.list({ scope: 'all' })
+
+    expect(page.counts).toEqual({ all: 26, draft: 2, publish: 26, deleted: 0, audit: 0 })
+  })
+
+  it('omits counts entirely when the endpoint does not report them', async () => {
+    const { client } = setup([okEnvelope({ list: [], total: 0 })])
+
+    const page = await client.list({ scope: 'all' })
+
+    // Absent, not `{}` — an empty object would read as "zero drafts".
+    expect(page).not.toHaveProperty('counts')
+  })
+
+  it('reports the page size the server actually used, not the one requested', async () => {
+    const { client, fake } = setup([okEnvelope({ list: [], total: 0, page: 2, size: 20 })])
+
+    const page = await client.list({ scope: 'all', page: 2, pageSize: 5 })
+
+    // Measured: the console pins its page size and ignores `size`. Reporting the
+    // echo keeps the caller from believing it got 5 items when it got 20.
+    expect(fake.last().url).toContain('size=5')
+    expect(page.pageSize).toBe(20)
+    expect(page.page).toBe(2)
+  })
+
+  it('keeps the requested page size when the server echoes none', async () => {
+    const { client } = setup([okEnvelope({ list: [], total: 0 })])
+
+    const page = await client.list({ scope: 'all', page: 3, pageSize: 30 })
+
+    expect(page).toMatchObject({ page: 3, pageSize: 30 })
+  })
+
+  it('treats a missing list key as an empty page rather than an error', async () => {
+    const { client } = setup([okEnvelope({ count: { all: 0, draft: 0 }, total: 0 })])
+
+    const page = await client.list({ scope: 'all' })
+
+    expect(page.items).toEqual([])
+    expect(page.counts).toEqual({ all: 0, draft: 0 })
+  })
+
+  it('marks an unreadable status as unknown rather than as published', async () => {
+    const { client } = setup([okEnvelope({ list: [{ articleId: '1', title: 'x' }], total: 1 })])
+
+    const page = await client.list({ scope: 'all' })
+
+    // `toStatusCode` yields -1, which is absent from ARTICLE_STATE_BY_CODE. A
+    // default of 0 would map to 'published' and claim a draft is live.
+    expect(page.items[0]).toMatchObject({ statusCode: -1, state: 'unknown' })
+  })
+
+  it('keeps the endpoint url when CSDN sends one', async () => {
+    const { client } = setup([
+      okEnvelope({ list: [{ articleId: '1', url: 'https://example.test/custom' }], total: 1 })
+    ])
+
+    const page = await client.list({ scope: 'all' })
+
+    expect(page.items[0]?.url).toBe('https://example.test/custom')
+  })
+
+  it('reads a counter that is not a number at all as 0 rather than NaN', async () => {
+    const { client } = setup([
+      okEnvelope({
+        list: [{ articleId: '1', viewCount: 'n/a', diggCount: '-' }],
+        total: 1,
+        count: { draft: 'n/a' }
+      })
+    ])
+
+    const page = await client.list({ scope: 'all' })
+
+    // A NaN would propagate into every summary an agent reads; 0 is wrong but
+    // bounded, and the raw record still carries what CSDN actually said.
+    expect(page.items[0]?.viewCount).toBe(0)
+    expect(page.items[0]?.diggCount).toBe(0)
+    expect(page.counts).toEqual({ draft: 0 })
   })
 })
 

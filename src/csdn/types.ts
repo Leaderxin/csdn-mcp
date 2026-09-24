@@ -105,14 +105,42 @@ export interface ArticleSummary {
   diggCount: number
   collectCount: number
   commentCount: number
+  /**
+   * CSDN's raw `status` code. Only the author console reports it: every article
+   * the public list returns is by definition published, so there is nothing to
+   * distinguish. Absent (rather than 0) when the endpoint did not say, because
+   * `0` is a meaningful code here and would read as `'published'`.
+   */
+  statusCode?: number
+  /** `statusCode` mapped through `articleStateFromCode`. Console only. */
+  state?: ArticleState
   raw: Record<string, unknown>
 }
+
+/**
+ * Which endpoint answers a list call. They see different sets of articles, and
+ * the difference is not a detail: the public list cannot show a draft, so it can
+ * never answer "which drafts do I have?".
+ */
+export type ArticleListScope =
+  /** The public community endpoint: published articles, no credentials needed. */
+  | 'published'
+  /** The author console: every state, drafts included. Needs the cookie. */
+  | 'all'
 
 export interface ArticleListPage {
   items: ArticleSummary[]
   page: number
   pageSize: number
   total: number
+  /** Which endpoint answered, so a caller never has to guess what it sees. */
+  scope: ArticleListScope
+  /**
+   * CSDN's own per-state tallies, reported by the console endpoint only:
+   * `{ all, draft, publish, private, deleted, audit, ... }`. This is the only
+   * place a draft *count* is available without walking every page.
+   */
+  counts?: Record<string, number>
 }
 
 /** Result of an image upload to the CSDN image host. */
