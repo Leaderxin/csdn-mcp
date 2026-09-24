@@ -27,7 +27,7 @@ export interface SignInput {
   method: string
   /** Path plus optional query string, e.g. `/blog-console-api/v1/x?id=1`. No origin. */
   uri: string
-  /** Value of the `Accept` request header. Defaults to `*/*`. */
+  /** Value of the `Accept` request header. Defaults to `*\/*`. */
   accept?: string
   /** Value of the `Content-Type` request header. Empty string when absent. */
   contentType?: string

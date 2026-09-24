@@ -25,6 +25,8 @@ export interface HttpResponse {
   status: number
   headers: { get(name: string): string | null }
   text(): Promise<string>
+  /** Final URL after redirects, when the runtime exposes it. */
+  url?: string
 }
 
 export type FetchLike = (url: string, init: RequestInit) => Promise<HttpResponse>
@@ -134,10 +136,11 @@ export class CsdnHttpClient {
     this.rateLimiter = options.rateLimiter ?? new RateLimiter({ sleep: this.sleep, now: this.now })
   }
 
-  /** Absolute URL for a bizapi path. */
+  /** Absolute URL for a bizapi path (or pass through an absolute URL). */
   url(path: string, query?: QueryParams): string {
     const search = buildQuery(query)
-    return `${this.config.apiBase}${path}${search === '' ? '' : `?${search}`}`
+    const base = /^https?:\/\//i.test(path) ? path : `${this.config.apiBase}${path}`
+    return `${base}${search === '' ? '' : `?${search}`}`
   }
 
   /**
@@ -163,7 +166,8 @@ export class CsdnHttpClient {
     }
 
     const query = buildQuery(options.query)
-    const url = `${this.config.apiBase}${options.path}${query === '' ? '' : `?${query}`}`
+    const absolute = /^https?:\/\//i.test(options.path)
+    const url = this.url(options.path, options.query)
 
     const headers: Record<string, string> = {
       Accept: accept,
@@ -173,12 +177,16 @@ export class CsdnHttpClient {
     }
     if (contentType !== '') headers['Content-Type'] = contentType
     if (signed) {
+      // For absolute URLs only the path component is signed, exactly as a
+      // relative path would be.
+      const signPath = absolute ? new URL(url).pathname : options.path
+      const signQuery = absolute ? new URL(url).search.replace(/^\?/, '') : query
       Object.assign(
         headers,
         buildSignHeaders({
           method,
-          path: options.path,
-          query,
+          path: signPath,
+          query: signQuery,
           accept,
           contentType,
           appKey: this.config.appKey,
@@ -225,11 +233,18 @@ export class CsdnHttpClient {
   /**
    * Fetch a public (unsigned, cookie-less) URL as text — used to check whether a
    * post is really live, which is the only claim that cannot lie.
+   *
+   * Shaped so the `try` block completes by FALLING THROUGH into `finally`
+   * rather than by returning from inside it. V8 only increments a `finally`
+   * block's coverage counter on fall-through, so a `return` inside the `try`
+   * leaves the branch permanently at 0% and makes the project's 100% branch
+   * gate unpassable. Do not "simplify" this back into a return inside the try.
    */
   async fetchText(url: string, options: FetchTextOptions = {}): Promise<TextResponse> {
     const controller = new AbortController()
     const timeoutMs = options.timeoutMs ?? this.config.timeoutMs
     const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let result: TextResponse
     try {
       const response = await this.fetchImpl(url, {
         method: 'GET',
@@ -243,12 +258,17 @@ export class CsdnHttpClient {
           ...options.headers
         }
       })
-      return { status: response.status, text: await response.text(), finalUrl: url }
+      const text = await response.text()
+      // `response.url` is the post-redirect URL; `url` is what we asked for.
+      // CSDN redirects retired article URLs, and reporting the requested one as
+      // "final" would hide that.
+      result = { status: response.status, text, finalUrl: response.url ?? url }
     } catch (error) {
       throw toCsdnError(error)
     } finally {
       clearTimeout(timer)
     }
+    return result
   }
 
   /** One send + parse cycle. Separated so `request` owns the retry policy. */
@@ -312,9 +332,11 @@ export class CsdnHttpClient {
 /**
  * Parse a response body as JSON.
  *
- * A non-JSON 2xx almost always means the endpoint moved: bizapi returns the
- * `openresty` 404 page with status 200, which is how both `list-categories` and
- * `list-tags` in v0 silently rotted.
+ * A non-JSON 2xx almost always means the endpoint moved: bizapi answers an
+ * unregistered path with the `openresty` 404 page, which is how both
+ * `list-categories` and `list-tags` in v0 silently rotted. (Measured: that page
+ * arrives with HTTP 404, not HTTP 200 — the giveaway is the body, so the body is
+ * what this function checks rather than the status.)
  */
 export function parseJsonBody<T>(text: string): T {
   const trimmed = text.trim()

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "csdn-mcp": {
+      "command": "node",
+      "args": ["/ABSOLUTE/PATH/TO/csdn-mcp/dist/index.js"],
+      "env": {
+        "CSDN_COOKIE": "PASTE_YOUR_FULL_COOKIE_HEADER_HERE"
+      }
+    }
+  }
+}

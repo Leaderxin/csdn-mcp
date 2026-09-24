@@ -206,7 +206,9 @@ Rules for every tool handler:
 
 Conventional Commits (`feat:`, `fix:`, `test:`, `docs:`, `chore:`, `refactor:`).
 One logical change per commit. Never commit a `.env`, a cookie, or a captured
-`Cookie:` header — CI runs `gitleaks`.
+`Cookie:` header — CI has a `secret-scan` job that fails on a tracked `.env`, a
+populated `CSDN_COOKIE` literal, or any `UserToken`/`csrfToken`/`c_session`
+assignment with a real-looking value.
 
 ## 7. Non-goals for v1.0.0
 

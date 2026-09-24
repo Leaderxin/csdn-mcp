@@ -40,7 +40,7 @@ function toHeaders(init: RequestInit): Record<string, string> {
   const raw = init.headers ?? {}
   const out: Record<string, string> = {}
   if (Array.isArray(raw)) {
-    for (const [key, value] of raw) out[key] = String(value)
+    for (const entry of raw as Array<[string, string]>) out[entry[0]] = String(entry[1])
   } else if (raw instanceof Headers) {
     raw.forEach((value, key) => {
       out[key] = value

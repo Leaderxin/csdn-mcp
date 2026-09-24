@@ -33,12 +33,37 @@ const LEVEL_WEIGHT: Record<LogLevel, number> = {
   debug: 4
 }
 
-/** Matches `UserToken=abc`, `Cookie: a=b`, `"cookie": "..."` and friends. */
-const COOKIE_PATTERN = /(UserToken|UserName|csrfToken|uuid_tt_dd|c_session|Cookie)\s*[=:]\s*"?[^\s;"]{3,}/gi
+/**
+ * Credential field names. Matched with the name's own quoting tolerated so that
+ * a JSON payload survives: `{"cookie":"abcdefg"}` used to slip through because
+ * the quote sits between the field name and the colon, and `serializeValue`
+ * JSON.stringifies objects before redaction.
+ */
+const CREDENTIAL_NAMES = 'UserToken|UserName|csrfToken|uuid_tt_dd|c_session|Set-Cookie|Cookie'
 
-/** Redact anything that looks like a credential. Applied to every log line. */
+/**
+ * Matches `UserToken=abc`, `Cookie: a=b`, `"cookie":"a,b"` and friends.
+ *
+ * The value class deliberately excludes whitespace, `;`, `}`, quotes and
+ * apostrophes but NOT commas: HTTP cookie values are semicolon-separated, while
+ * a JSON value may legitimately contain a comma, and truncating at the comma
+ * would leak the remainder.
+ */
+const COOKIE_PATTERN = new RegExp(
+  `(${CREDENTIAL_NAMES})(["']?\\s*[=:]\\s*["']?)([^\\s;}"']{2,})`,
+  'gi'
+)
+
+/**
+ * Redact anything that looks like a credential. Applied to every log line AND
+ * to every serialized field, because redacting only one of the two leaves the
+ * other as a leak path.
+ *
+ * Group 2 is re-emitted verbatim so the output stays valid JSON / valid header
+ * syntax instead of being mangled into unbalanced quotes.
+ */
 export function redact(input: string): string {
-  return input.replace(COOKIE_PATTERN, (_match, name: string) => `${name}=<redacted>`)
+  return input.replace(COOKIE_PATTERN, (_match, name: string, separator: string) => `${name}${separator}<redacted>`)
 }
 
 /** Serialize a field value without ever emitting a raw cookie-ish string. */
