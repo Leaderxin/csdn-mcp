@@ -100,11 +100,20 @@ function formOf(request: RecordedRequest | undefined): FormData {
   return request?.body as FormData
 }
 
+/**
+ * A Blob as it arrives at the object store. `FormData` decorates it with the
+ * file name the caller supplied, but that decoration is a `File` only on Node 20+;
+ * on Node 18 it is a plain `Blob` carrying a `name`. Asserting the class rather
+ * than the name made the suite depend on the runner's Node version for something
+ * the upload path does not care about.
+ */
+type NamedBlob = Blob & { name?: string }
+
 /** Read a Blob-valued form field, failing loudly when the field is missing. */
-function blobField(form: FormData, name: string): Blob {
+function blobField(form: FormData, name: string): NamedBlob {
   const value = form.get(name)
   if (!(value instanceof Blob)) throw new Error(`form field ${name} is not a Blob: ${String(value)}`)
-  return value
+  return value as NamedBlob
 }
 
 async function captureCsdnError(fn: () => Promise<unknown>): Promise<CsdnError> {
@@ -264,8 +273,10 @@ describe('MediaClient step 2 — the multipart upload', () => {
     await client.uploadBuffer(Buffer.from('png-bytes'), 'body', 'photo.png')
 
     const file = blobField(formOf(fake.requests[1]), 'file')
-    expect(file).toBeInstanceOf(File)
-    expect((file as File).name).toBe('photo.png')
+    // `Blob` is a Node 18+ global. The object store only cares about the bytes,
+    // the MIME type and the file name — not which class carries them.
+    expect(file).toBeInstanceOf(Blob)
+    expect(file.name).toBe('photo.png')
     expect(file.type).toBe('image/png')
     expect(file.size).toBe(9)
     expect(await file.text()).toBe('png-bytes')
@@ -371,7 +382,7 @@ describe('MediaClient.upload', () => {
         imageTemplate: '',
         imageSuffix: 'png'
       })
-      expect((blobField(formOf(fake.requests[1]), 'file') as File).name).toBe('shot.png')
+      expect(blobField(formOf(fake.requests[1]), 'file').name).toBe('shot.png')
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
