@@ -1,6 +1,15 @@
-MIT License
+# NOTICE
 
-Copyright (c) 2026 徐志兴 (Leaderxin)
+## 派生关系
+
+本项目的早期版本派生自 **mcp-csdn-publisher**
+(<https://github.com/Ln129402/mcp-csdn-publisher>)，其版权归 Ln129402 所有，同样以
+MIT 许可证发布。
+
+按 MIT 许可证的要求，上游版权声明保留如下：
+
+```
+Copyright (c) 2026 Ln129402
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +28,14 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+```
+
+## 为什么分成两个文件
+
+`LICENSE` 只放本项目自己的 MIT 全文——**单份、完整、未经改动**。一段「派生说明 +
+第二份 MIT 全文」插在 `LICENSE` 里会让 GitHub 的许可证识别器匹配不上标准文本，仓库
+侧栏的 License 会显示成 `Other`，与 README 的 MIT 徽章自相矛盾。把上游声明挪到
+`NOTICE` 既满足 MIT 对保留版权声明的要求，也让 LICENSE 保持可识别。
+
+v1.0.0 是一次完整重写：`src/` 下没有任何代码继承自上游（上游是 249 行单文件，本项目
+是分层结构 + 11 个工具）。保留派生关系是为了如实记录来源。

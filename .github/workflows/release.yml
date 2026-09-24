@@ -83,4 +83,19 @@ jobs:
         # needed here. `--generate-notes` produces the same notes as the UI.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
+        run: |
+          set -euo pipefail
+          # Idempotent on purpose. `gh release create` exits 422 with
+          # "Release.tag_name already exists" when the release is already there —
+          # which happens whenever a maintainer publishes it by hand (as
+          # v1.0.0's was), or the job is simply re-run. A release pipeline that
+          # goes red for that teaches people to ignore it.
+          #
+          # An existing release is left untouched rather than refreshed: its
+          # notes may have been written by a human, and overwriting them to
+          # satisfy an automated re-run would destroy real work.
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "release ${GITHUB_REF_NAME} already exists — leaving its notes untouched"
+            exit 0
+          fi
+          gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
