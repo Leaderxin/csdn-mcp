@@ -170,7 +170,9 @@ describe('CsdnHttpClient.request auth', () => {
     const fake = createFakeFetch()
     const { client } = makeClient(fake, { cookie: '   ' })
 
-    await expect(client.request({ path: '/v1/x' })).rejects.toMatchObject({ code: 'AUTH_MISSING' })
+    await expect(client.request({ method: 'GET', path: '/v1/x' })).rejects.toMatchObject({
+      code: 'AUTH_MISSING'
+    })
     expect(fake.requests).toHaveLength(0)
   })
 
@@ -208,7 +210,7 @@ describe('CsdnHttpClient.request auth', () => {
     const fake = createFakeFetch(okEnvelope({ ok: true }))
     const { client } = makeClient(fake)
 
-    await client.request({ path: '/v1/x' })
+    await client.request({ method: 'GET', path: '/v1/x' })
     expect(fake.last().headers['Cookie']).toBe(COOKIE)
   })
 
@@ -226,7 +228,7 @@ describe('CsdnHttpClient.request headers and body', () => {
     const fake = createFakeFetch(okEnvelope({ ok: true }))
     const { client } = makeClient(fake)
 
-    await client.request({ path: '/v1/x' })
+    await client.request({ method: 'GET', path: '/v1/x' })
     const headers = fake.last().headers
     expect(headers['User-Agent']).toBe(buildConfig().userAgent)
     expect(headers['Accept']).toBe('*/*')
@@ -250,7 +252,7 @@ describe('CsdnHttpClient.request headers and body', () => {
     const fake = createFakeFetch(okEnvelope({ ok: true }))
     const { client } = makeClient(fake)
 
-    await client.request({ path: '/v1/x' })
+    await client.request({ method: 'GET', path: '/v1/x' })
     const headers = fake.last().headers
     expect(headers['X-Ca-Key']).toBe(buildConfig().appKey)
     expect(headers['X-Ca-Nonce']).toMatch(UUID)
@@ -532,7 +534,9 @@ describe('unwrapEnvelope', () => {
     const fake = createFakeFetch(apiErrorEnvelope(4001, '文章频繁发布，请稍后再试'))
     const { client } = makeClient(fake)
 
-    await expect(client.requestData({ path: '/v1/x' })).rejects.toMatchObject({ code: 'RATE_LIMITED' })
+    await expect(client.requestData({ method: 'GET', path: '/v1/x' })).rejects.toMatchObject({
+      code: 'RATE_LIMITED'
+    })
     expect(fake.requests).toHaveLength(1)
   })
 })
@@ -544,7 +548,7 @@ describe('request HTTP status mapping', () => {
 
     let thrown: unknown
     try {
-      await client.request({ path: '/v1/x' })
+      await client.request({ method: 'GET', path: '/v1/x' })
     } catch (error) {
       thrown = error
     }
@@ -560,7 +564,7 @@ describe('request HTTP status mapping', () => {
     const fake = createFakeFetch({ status: 403, body: 'forbidden' })
     const { client } = makeClient(fake)
 
-    await expect(client.request({ path: '/v1/x' })).rejects.toMatchObject({
+    await expect(client.request({ method: 'GET', path: '/v1/x' })).rejects.toMatchObject({
       code: 'AUTH_INVALID',
       status: 403,
       detail: 'forbidden',
@@ -572,7 +576,7 @@ describe('request HTTP status mapping', () => {
     const fake = createFakeFetch({ status: 429, body: 'slow down' })
     const { client } = makeClient(fake, { maxRetries: 0 })
 
-    await expect(client.request({ path: '/v1/x' })).rejects.toMatchObject({
+    await expect(client.request({ method: 'GET', path: '/v1/x' })).rejects.toMatchObject({
       code: 'RATE_LIMITED',
       status: 429,
       retryable: true
@@ -583,7 +587,7 @@ describe('request HTTP status mapping', () => {
     const fake = createFakeFetch({ status: 500, body: 'boom' })
     const { client } = makeClient(fake, { maxRetries: 0 })
 
-    await expect(client.request({ path: '/v1/x' })).rejects.toMatchObject({
+    await expect(client.request({ method: 'GET', path: '/v1/x' })).rejects.toMatchObject({
       code: 'SERVER_ERROR',
       status: 500
     })
@@ -593,7 +597,7 @@ describe('request HTTP status mapping', () => {
     const fake = createFakeFetch({ status: 418, body: "I'm a teapot" })
     const { client } = makeClient(fake)
 
-    await expect(client.request({ path: '/v1/x' })).rejects.toMatchObject({
+    await expect(client.request({ method: 'GET', path: '/v1/x' })).rejects.toMatchObject({
       code: 'HTTP_ERROR',
       status: 418,
       detail: "I'm a teapot",
@@ -606,7 +610,10 @@ describe('request HTTP status mapping', () => {
     const fake = createFakeFetch({ status: 199, body: 'continue' })
     const { client } = makeClient(fake)
 
-    await expect(client.request({ path: '/v1/x' })).rejects.toMatchObject({ code: 'HTTP_ERROR', status: 199 })
+    await expect(client.request({ method: 'GET', path: '/v1/x' })).rejects.toMatchObject({
+      code: 'HTTP_ERROR',
+      status: 199
+    })
   })
 
   it('parses the body of a 200 response', async () => {
@@ -627,7 +634,7 @@ describe('request retry behaviour', () => {
     })
     const { client, clock } = makeClient(fake, { maxRetries: 2 })
 
-    await expect(client.request({ path: '/v1/x' })).rejects.toMatchObject({
+    await expect(client.request({ method: 'GET', path: '/v1/x' })).rejects.toMatchObject({
       code: 'NETWORK',
       message: 'socket hang up'
     })
@@ -642,7 +649,7 @@ describe('request retry behaviour', () => {
     })
     const { client } = makeClient(fake, { maxRetries: 2 })
 
-    await expect(client.requestData({ path: '/v1/x' })).resolves.toEqual({ id: 42 })
+    await expect(client.requestData({ method: 'GET', path: '/v1/x' })).resolves.toEqual({ id: 42 })
     expect(fake.requests).toHaveLength(2)
   })
 
@@ -650,7 +657,7 @@ describe('request retry behaviour', () => {
     const fake = createFakeFetch({ status: 503, body: 'unavailable' }, okEnvelope({ id: 7 }))
     const { client, clock } = makeClient(fake, { maxRetries: 2 })
 
-    await expect(client.requestData({ path: '/v1/x' })).resolves.toEqual({ id: 7 })
+    await expect(client.requestData({ method: 'GET', path: '/v1/x' })).resolves.toEqual({ id: 7 })
     expect(fake.requests).toHaveLength(2)
     expect(clock.sleeps).toEqual([500])
   })
@@ -667,7 +674,9 @@ describe('request retry behaviour', () => {
     const fake = createFakeFetch({ status: 400, body: 'bad request' })
     const { client, clock } = makeClient(fake, { maxRetries: 2 })
 
-    await expect(client.request({ path: '/v1/x' })).rejects.toMatchObject({ code: 'HTTP_ERROR' })
+    await expect(client.request({ method: 'GET', path: '/v1/x' })).rejects.toMatchObject({
+      code: 'HTTP_ERROR'
+    })
     expect(fake.requests).toHaveLength(1)
     expect(clock.sleeps).toEqual([])
   })
@@ -676,7 +685,9 @@ describe('request retry behaviour', () => {
     const fake = createFakeFetch({ status: 401, body: 'nope' })
     const { client } = makeClient(fake, { maxRetries: 3 })
 
-    await expect(client.request({ path: '/v1/x' })).rejects.toMatchObject({ code: 'AUTH_INVALID' })
+    await expect(client.request({ method: 'GET', path: '/v1/x' })).rejects.toMatchObject({
+      code: 'AUTH_INVALID'
+    })
     expect(fake.requests).toHaveLength(1)
   })
 
@@ -699,7 +710,7 @@ describe('request retry behaviour', () => {
     )
     const { client, clock } = makeClient(fake, { maxRetries: 2 })
 
-    await expect(client.requestData({ path: '/v1/x' })).resolves.toEqual({ ok: true })
+    await expect(client.requestData({ method: 'GET', path: '/v1/x' })).resolves.toEqual({ ok: true })
     expect(fake.requests).toHaveLength(3)
     expect(clock.sleeps).toEqual([500, 1_000])
   })
@@ -709,7 +720,7 @@ describe('request retry behaviour', () => {
     const fake = createFakeFetch({ status: 500, body: 'boom' }, okEnvelope({ ok: true }))
     const { client } = makeClient(fake, { maxRetries: 2 }, { logger: createLogger({ level: 'debug', sink }) })
 
-    await client.requestData({ path: '/v1/x' })
+    await client.requestData({ method: 'GET', path: '/v1/x' })
     expect(lines).toEqual(['[csdn-mcp] DEBUG retrying request path=/v1/x attempt=1 delay=500'])
   })
 
@@ -717,7 +728,7 @@ describe('request retry behaviour', () => {
     const fake = createFakeFetch(okEnvelope({ ok: true }))
     const { client, clock } = makeClient(fake)
 
-    await client.requestData({ path: '/v1/x' })
+    await client.requestData({ method: 'GET', path: '/v1/x' })
     expect(fake.requests).toHaveLength(1)
     expect(clock.sleeps).toEqual([])
   })
@@ -730,7 +741,7 @@ describe('request retry behaviour', () => {
     })
     const { client, clock } = makeClient(fake, { maxRetries: 2 })
 
-    await expect(client.request({ path: '/v1/x', retries: 0.5 })).rejects.toMatchObject({
+    await expect(client.request({ method: 'GET', path: '/v1/x', retries: 0.5 })).rejects.toMatchObject({
       code: 'NETWORK',
       message: 'socket hang up'
     })
@@ -785,8 +796,8 @@ describe('request throttling', () => {
     const fake = createFakeFetch(okEnvelope({ ok: true }))
     const { client, clock } = makeClient(fake, { minRequestIntervalMs: 250 })
 
-    await client.request({ path: '/v1/x' })
-    await client.request({ path: '/v1/x' })
+    await client.request({ method: 'GET', path: '/v1/x' })
+    await client.request({ method: 'GET', path: '/v1/x' })
 
     expect(clock.sleeps).toEqual([250])
   })
@@ -986,7 +997,7 @@ describe('CsdnHttpClient constructor seams', () => {
     const fake = createFakeFetch(okEnvelope({ ok: true }))
     const client = new CsdnHttpClient({ config: makeConfig(), fetchImpl: fake.fetch })
 
-    await client.requestData({ path: '/v1/x' })
+    await client.requestData({ method: 'GET', path: '/v1/x' })
     expect(fake.requests).toHaveLength(1)
   })
 
@@ -1015,7 +1026,7 @@ describe('CsdnHttpClient constructor seams', () => {
       logger: createLogger({ level: 'debug', sink })
     })
 
-    await client.requestData({ path: '/v1/x' })
+    await client.requestData({ method: 'GET', path: '/v1/x' })
     expect(lines).toHaveLength(1)
     expect(lines[0]).toContain('retrying request')
   })
@@ -1071,5 +1082,145 @@ describe('default fetch wiring', () => {
     } finally {
       globalThis.fetch = original
     }
+  })
+})
+
+describe('write safety: no duplicate writes, and no failure read as success', () => {
+  it('sends a non-idempotent POST exactly once when the response is a 5xx', async () => {
+    const fake = createFakeFetch({ status: 500, body: 'boom' }, okEnvelope({ id: 1 }))
+    const { client, clock } = makeClient(fake, { maxRetries: 2 })
+
+    // Retrying here is how a duplicate article gets created: saveArticle carries
+    // no idempotency key, so a lost response is indistinguishable from a request
+    // that never landed.
+    await expect(client.requestData({ path: '/v1/editor/save' })).rejects.toMatchObject({
+      code: 'SERVER_ERROR'
+    })
+    expect(fake.requests).toHaveLength(1)
+    expect(clock.sleeps).toEqual([])
+  })
+
+  it('sends a non-idempotent POST exactly once when the connection drops', async () => {
+    const fake = createFakeFetch(() => {
+      throw new Error('socket hang up')
+    })
+    const { client } = makeClient(fake, { maxRetries: 2 })
+
+    await expect(client.requestData({ path: '/v1/editor/save' })).rejects.toMatchObject({
+      code: 'NETWORK'
+    })
+    expect(fake.requests).toHaveLength(1)
+  })
+
+  it('sends a non-idempotent POST exactly once when the request times out', async () => {
+    const fake = createFakeFetch(() => {
+      const abort = new Error('The operation was aborted')
+      abort.name = 'AbortError'
+      throw abort
+    })
+    const { client } = makeClient(fake, { maxRetries: 2 })
+
+    // The realistic slow-save case: the write may well have landed server-side.
+    await expect(client.requestData({ path: '/v1/editor/save' })).rejects.toMatchObject({
+      code: 'TIMEOUT'
+    })
+    expect(fake.requests).toHaveLength(1)
+  })
+
+  it('still retries a write CSDN explicitly refused, because then nothing was written', async () => {
+    const fake = createFakeFetch({ status: 429, body: 'slow down' }, okEnvelope({ id: 9 }))
+    const { client, clock } = makeClient(fake, { maxRetries: 2, saveIntervalMs: 7_777 })
+
+    await expect(client.requestData({ path: '/v1/editor/save' })).resolves.toEqual({ id: 9 })
+    expect(fake.requests).toHaveLength(2)
+    expect(clock.sleeps).toEqual([7_777])
+  })
+
+  it('lets a caller opt a write into retries when it knows the write is idempotent', async () => {
+    const fake = createFakeFetch({ status: 500, body: 'boom' }, okEnvelope({ id: 5 }))
+    const { client } = makeClient(fake, { maxRetries: 2 })
+
+    await expect(client.requestData({ path: '/v1/editor/save', idempotent: true })).resolves.toEqual({
+      id: 5
+    })
+    expect(fake.requests).toHaveLength(2)
+  })
+
+  it('throttles every attempt of a retried request, not only the first', async () => {
+    const fake = createFakeFetch({ status: 500, body: 'boom' }, okEnvelope({ ok: true }))
+    const clock = makeClock()
+    const limiter = new RateLimiter({ sleep: clock.sleep, now: clock.now })
+    const acquire = vi.spyOn(limiter, 'acquire')
+    const client = new CsdnHttpClient({
+      config: makeConfig({ maxRetries: 2, minRequestIntervalMs: 250 }),
+      fetchImpl: fake.fetch,
+      sleep: clock.sleep,
+      now: clock.now,
+      rateLimiter: limiter
+    })
+
+    // Acquiring once outside the loop spaced only the first attempt, which let a
+    // retried request fire again inside the interval it was supposed to respect.
+    await client.requestData({ method: 'GET', path: '/v1/x' })
+    expect(acquire).toHaveBeenCalledTimes(2)
+  })
+
+  it('treats a 200 body with no code as a failure instead of a success', async () => {
+    const fake = createFakeFetch({ status: 200, body: { status: 500, message: 'del failed' } })
+    const { client } = makeClient(fake)
+
+    // CSDN's phoenix errors report `status`, not `code`. Reading that as success
+    // let a delete that failed report itself as done.
+    await expect(client.requestData({ path: '/v1/article/del' })).rejects.toMatchObject({
+      code: 'MALFORMED_RESPONSE'
+    })
+  })
+
+  it('treats an empty 200 body as a failure', async () => {
+    const fake = createFakeFetch({ status: 200, body: {} })
+    const { client } = makeClient(fake)
+
+    await expect(client.requestData({ path: '/v1/article/del' })).rejects.toMatchObject({
+      code: 'MALFORMED_RESPONSE'
+    })
+  })
+
+  it('treats a 200 body with a null payload and a message as a failure', async () => {
+    const fake = createFakeFetch({ status: 200, body: { msg: 'error', data: null } })
+    const { client } = makeClient(fake)
+
+    await expect(client.requestData({ path: '/v1/article/del' })).rejects.toMatchObject({
+      code: 'MALFORMED_RESPONSE'
+    })
+  })
+
+  it('still accepts an envelope that carries data but omits code', async () => {
+    const fake = createFakeFetch({ status: 200, body: { data: { ok: true } } })
+    const { client } = makeClient(fake)
+
+    await expect(client.requestData({ path: '/v1/x' })).resolves.toEqual({ ok: true })
+  })
+
+  it('never sends the cookie or a signature to an object store, even with no flags passed', async () => {
+    const fake = createFakeFetch(okEnvelope({ imageUrl: 'https://cdn/x.png' }))
+    const { client } = makeClient(fake)
+
+    await client.request({ path: 'https://csdn-static.obs.example/x', formData: new FormData() })
+
+    const headers = fake.last().headers
+    expect(headers['Cookie']).toBeUndefined()
+    expect(Object.keys(headers).filter(name => name.startsWith('X-Ca-'))).toEqual([])
+  })
+
+  it('sends only the X-Ca-* headers, never the signer helper fields', async () => {
+    const fake = createFakeFetch(okEnvelope({ ok: true }))
+    const { client } = makeClient(fake)
+
+    await client.request({ path: '/v1/x', body: { a: 1 } })
+
+    const names = Object.keys(fake.last().headers)
+    expect(names).toContain('X-Ca-Signature')
+    expect(names).not.toContain('nonce')
+    expect(names).not.toContain('uri')
   })
 })

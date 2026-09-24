@@ -125,19 +125,24 @@ jobs:
           fi
 
           # --- 1. the .env file itself ----------------------------------------
-          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
-            fail ".env is tracked by git — remove it with 'git rm --cached .env'"
+          # `.env.local` / `.env.production` leak exactly as much as `.env`, and
+          # checking only the bare name missed them. `.env.example` is tracked on
+          # purpose, so it is the one exception.
+          if git ls-files | grep -E '(^|/)\.env($|\.)' | grep -qvE '\.env\.example$'; then
+            fail "an .env file is tracked by git — remove it with 'git rm --cached <path>'"
           fi
 
           # --- 2. a populated CSDN_COOKIE literal ------------------------------
-          if git grep -qE 'CSDN_COOKIE[[:space:]]*=[[:space:]]*"?[^"[:space:]]{20,}'; then
+          if git grep -qiE 'CSDN_COOKIE[[:space:]]*=[[:space:]]*"?[^"[:space:]]{20,}'; then
             fail "a populated CSDN_COOKIE literal is committed"
           fi
 
           # --- 3. a real-shaped token value ------------------------------------
           # 32 hex chars for UserToken; 30+ for uuid_tt_dd. Test fixtures use
           # short human-readable values and deliberately do not match.
-          if git grep -qE '(UserToken=[0-9a-fA-F]{32}|uuid_tt_dd=[^[:space:];"]{30,})'; then
+          # Case-insensitive: `usertoken=` leaks a cookie just as well as
+          # `UserToken=`, and the patterns used to miss the lowercase spelling.
+          if git grep -qiE '(UserToken=[0-9a-fA-F]{32}|uuid_tt_dd=[^[:space:];"]{30,})'; then
             fail "a real-shaped CSDN token value is committed"
           fi
 

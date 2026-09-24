@@ -4,6 +4,30 @@
 
 来源：Hermes Agent 在真实发布流程中踩到的坑（2026-09）。
 
+## E. 状态（v1.0.1 复核）
+
+下表是逐条核对的结果，证据指向文件与测试名，而不是「应该已经修了」。
+
+| # | 状态 | 证据 |
+|---|---|---|
+| A1–A6 | FIXED | `src/tools/` 11 个工具；`tests/unit/tools/registry.test.ts` 断言注册表完整 |
+| B1 | FIXED | `buildSaveArticleBody` 只能产出 `status: 2`；测试「can never produce status 0, which CSDN now treats as an immediate publish」 |
+| B2 | FIXED | 发 `Description`；变异 M5（改回小写）被 4 个测试抓到 |
+| B3 | FIXED | `src/csdn/verify.ts`；`publish_article` / `update_article` 默认 `verify: true` |
+| B4 | FIXED | 两步上传 `resource-api/v1/image/direct/upload/signature` |
+| B5 | FIXED | 工具层 zod 在任何请求之前拒绝 `tags > 5` / `description > 256` / 空 markdown；csdn 层的 256 截断保留为最后一道兜底（语义是「工具层负责拒绝，csdn 层负责不发出超限请求」） |
+| B6 | 未在本次复核范围内 | 未实测表格与脚注的渲染结果，UNVERIFIABLE |
+| C1 | FIXED | `core` / `csdn` / `tools` 单向分层，`src/context.ts` 组合根 |
+| C2 | FIXED | 23 文件 / 526 用例，语句·分支·函数·行 100% |
+| C3 | FIXED | `.github/workflows/ci.yml`：Node 18/20/22 矩阵 + secret-scan |
+| C4 | FIXED | 限流器；**v1.0.1 修掉了「重试绕过限流」** |
+| C5 | FIXED | 超时 + 退避重试；**v1.0.1 起非幂等写只在 `RATE_LIMITED` 时重试**（避免重复建文章） |
+| C6 | FIXED | `CsdnError` 分类 + 工具层按 code 给中文提示 |
+| C7 | FIXED | 12 篇 docs + README / CONTRIBUTING / NOTICE |
+| C8 | PARTIAL | `dist/*.d.ts` 已产出，但没有独立的库入口，未验证「作为库使用」 |
+| D1 | PARTIAL | 按字段名脱敏，且家族名容忍后缀；**按值擦除仍未做**，见 CHANGELOG 的 Known gaps |
+| D2 | FIXED | ci.yml 的 `secret-scan` job（替代 gitleaks：无许可证与网络依赖，可本地复跑，且带自检） |
+
 ## A. 协议层 / 工具面
 
 | # | 问题 | 影响 | v1 目标 |

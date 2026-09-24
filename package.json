@@ -1,6 +1,6 @@
 {
   "name": "csdn-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MCP server for CSDN — let any AI agent publish, query, edit and manage blog posts.",
   "type": "module",
   "main": "dist/index.js",
@@ -35,7 +35,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:live": "CSDN_LIVE=1 vitest run --config vitest.live.config.ts",
+    "test:live": "npm run build && CSDN_LIVE=1 node scripts/live-smoke.mjs",
     "lint": "eslint . --ext .ts",
     "format": "prettier --write \"{src,tests}/**/*.ts\" \"*.md\" \"docs/**/*.md\"",
     "format:check": "prettier --check \"{src,tests}/**/*.ts\" \"*.md\" \"docs/**/*.md\"",
