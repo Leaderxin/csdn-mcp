@@ -158,7 +158,7 @@
 
 **现象**：`MALFORMED_RESPONSE`，`detail` 里是一段 HTML。
 
-**原因**：请求打到了**已经下线或改名**的接口。bizapi 对不存在的路径经常返回 **HTTP 200 + `openresty` 的 404 HTML 页面**——状态码是 200，内容不是 JSON。已知下线的端点见 [API-NOTES.md](API-NOTES.md#7-已下线的端点)。
+**原因**：请求打到了**已经下线或改名**的接口。bizapi 对不存在的路径会返回 `openresty` 的 404 HTML 页面（实测状态码是 HTTP 404），内容不是 JSON。已知下线的端点见 [API-NOTES.md](API-NOTES.md#7-已下线的端点)。
 
 **修复**：确认你/工具用的是本文列出的在端点。元数据工具在接口失效时会降级为内置列表 + `source: "builtin"`，看到 `builtin` 就说明线上接口这次没取到。
 
@@ -185,9 +185,11 @@ stderr 里会打印 `[csdn-mcp] 启动失败 <错误>`。另外注意：**stdout
 
 ---
 
-## VERIFY_FAILED
+## VERIFY_FAILED（自检不一致）
 
-**现象**：`publish_article` / `update_article` 返回 `VERIFY_FAILED`。
+**现象**：`publish_article` / `update_article` 返回的 `verification.consistent` 是 `false`，`warnings` 和摘要行里写着不一致；如果意图是草稿而文章已经公开可见，摘要行最前面还会要求**立即删除**。
+
+> `VERIFY_FAILED` 是错误码表里为这种情况保留的码，但 v1.0.0 的工具层**不把它当错误返回**：自检不一致时仍返回完整 payload（`articleId`、`url`、`verification`、`warnings`），因为"删除这篇误发布的文章"恰恰需要那个 `articleId`——换成 error 返回就把它弄丢了。
 
 **原因**：写入返回成功，但自检结果和写入的声明不一致——例如声称发布了、公开页却仍返回 404（文章还在审核，或 CDN 缓存未刷新），或声称是草稿、公开页却已经 200。
 

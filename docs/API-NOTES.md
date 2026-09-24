@@ -257,7 +257,7 @@ Content-Type: application/json;charset=UTF-8     ← 无空格，且必须与签
 | `/blog-console-api/v3/blog/list` | **404** | v0 的 `list-categories` / `list-tags` 就挂在这里，长期静默失效 |
 | `imgservice.csdn.net` | **全部 404** | v0 的图片上传整体不可用，必须改走第 4 节的两步上传 |
 
-**最阴的一点**：bizapi 对不存在的路径有时会返回 **HTTP 200 + `openresty` 的 404 HTML 页面**。只要按状态码判断就会以为请求成功，实际拿到一坨 HTML。所以响应体必须先确认是 JSON 信封（`{` 开头）再解析，否则抛：
+**最阴的一点**：bizapi 对不存在的路径会返回 **`openresty` 的 404 HTML 页面**。2026-09 实测它的状态码**就是 HTTP 404**（早期笔记里写的「HTTP 200 + 404 页面」是错的，见 [reverse-engineering.md](reverse-engineering.md) §2）——但**仍然不能靠状态码判断**：真正可靠的判据是响应体是不是 JSON 信封。所以响应体必须先确认是 JSON 信封（`{` 开头）再解析，否则抛：
 
 ```
 MALFORMED_RESPONSE 接口返回的不是 JSON，通常意味着该接口已下线或路径变更

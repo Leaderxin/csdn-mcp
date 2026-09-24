@@ -40,7 +40,7 @@
 - **摘要被静默丢弃**：线上字段名是大写的 `Description`，v0 传小写 `description`，CSDN 不报错直接丢弃并退回截取正文开头。
 - **发布后无自检**：现在同时校验 API 状态与公开页 HTTP 码，二者不一致会报 `VERIFY_FAILED`。
 - **图片上传域名整体 404**：`imgservice.csdn.net` 已下线，改走 `resource-api/v1/image/direct/upload/signature` 两步上传。
-- **元数据接口静默失效**：v0 的 `/blog-console-api/v3/blog/list` 已 404，且 bizapi 对失效路径会返回 "HTTP 200 + openresty 404 页面"，按状态码判断会误认为成功。现在响应体不是 JSON 信封时抛 `MALFORMED_RESPONSE`。
+- **元数据接口静默失效**：v0 的 `/blog-console-api/v3/blog/list` 已 404，且 bizapi 对失效路径返回的是 `openresty` 的 404 HTML 页面（实测状态码为 HTTP 404）。现在响应体不是 JSON 信封时一律抛 `MALFORMED_RESPONSE`，不依赖状态码判断。
 - **入参越界由服务端静默处理**：`tags` > 5 现在在本地被拒；摘要超过 256 字不再原样上线（写入层截断到 256，CSDN 自己也是按 256 截断）。
 - **正文未渲染，线上显示 `##` 与 `**` 字面量**：`saveArticle` 的 `content` 必须是渲染后的 HTML，Markdown 原文只能进 `markdowncontent`；v0 把 Markdown 原文填进了 `content`。
 - **Markdown 表格与脚注未渲染**：显式开启 `marked` 的 GFM 能力（关闭时表格会退化成一整段竖线）。

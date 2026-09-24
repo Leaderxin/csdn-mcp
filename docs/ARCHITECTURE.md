@@ -131,9 +131,17 @@ result in `docs/reverse-engineering.md`.
 ### `verifyArticle`
 
 ```ts
-function verifyArticle(deps: { articles: ArticleClient; http: CsdnHttpClient; config: CsdnConfig },
-                       articleId: string, expected: 'draft' | 'publish'): Promise<VerificationResult>
+function verifyArticle(
+  deps: { articles: ArticleClient; http: CsdnHttpClient; config: CsdnConfig },
+  articleId: string,
+  expected: 'draft' | 'publish'
+): Promise<VerificationResult>
 ```
+
+The implementation accepts an optional superset of `deps` — `sleep`, `now`,
+`publicRetries` and `retryDelayMs` — purely as injection seams for the 521 retry
+described below. A caller passing only `{ articles, http, config }` is unaffected
+and needs no change; the file is the authority on the exact shape.
 
 `consistent` is only true when **both** the API state and the public page agree
 with `expected`: draft ⇒ `state: 'draft'` and public HTTP 404; publish ⇒
