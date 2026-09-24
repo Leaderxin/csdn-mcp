@@ -250,6 +250,26 @@ Content-Type: application/json;charset=UTF-8     ← 无空格，且必须与签
 - 它只认 `username` 一个参数，**既不带 Cookie 也不带 `X-Ca-*` 签名**——带上反而会被 CSDN 回 403。这就是 `list_articles` 在没有 Cookie 的情况下也能用的原因。
 - 分页参数是 `page`（从 1 开始，默认 1）与 `size`（默认 20，上限 100）。越界在本地就被 `INVALID_ARGUMENT` 拦下。一个没有发布过任何文章的账号，响应里**连 `list` 键都没有**，此时按空列表处理，不是错误。
 
+**陷阱：对不存在的 id 调 `getArticle` 返回的是 HTTP 400，不是 404**
+
+```
+HTTP 400  {"code":400,"data":null,"msg":"系统暂不支持编辑此文章"}
+```
+
+所以「文章已被删除」在错误分类里落在 `HTTP_ERROR`，而不是 `NOT_FOUND`——`msg` 是 CSDN 的通用文案，被删除的文章和其他不可编辑的文章共用它，**因此没有把它映射成 `NOT_FOUND`**：那样会把「不是你的文章」也报成「不存在」。要确认一篇文章真的没了，用公开页 404 + 后台列表里查不到该 id 两个信号交叉验证（`scripts/verify-post-smoke.mjs` 就是这么做的）。
+
+### 实测补充：作者后台列表（能看到草稿）
+
+`GET /blog/phoenix/console/v1/article/list?page&size`（**需要 Cookie + 签名**）返回作者自己的文章，且**包含草稿**——`count` 里直接给出分类计数：
+
+```
+count: { all, draft, publish, private, deleted, audit, enable, original, ... }
+```
+
+这是目前唯一能看到「我有哪些草稿」的口径：公开社区接口只认已发布，`getArticle` 又要先知道 id。
+
+实测（2026-09，北京时间上午）两个接口各 6 次交替调用**全部 200**。更早一次探测把公开社区接口记为「被 WAF 拦，521，3/3」，**那是一次瞬时状态，不可复现**，不要当成既有结论继承。脚本 `scripts/verify-post-smoke.mjs` 可以随时重新量测。
+
 ## 7. 已下线的端点
 
 | 端点 / 域名 | 现状 | 影响 |
