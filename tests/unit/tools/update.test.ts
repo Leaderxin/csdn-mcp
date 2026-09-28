@@ -306,6 +306,27 @@ describe('update_article', () => {
     const text = textOf(result)
     expect(text).toContain('categories 不会写入草稿')
     expect(text).toContain('mode=publish')
+    // The first version of this fix only added the warning and left the reply
+    // claiming "修改字段：categories" in the same breath. Live run caught it.
+    expect(text).not.toContain('修改字段：categories')
+    expect(text).toContain('修改字段：（无：本次只会用同样的内容重写一次）')
+    await h.close()
+  })
+
+  it('still lists the fields that a draft write really does change', async () => {
+    const h = await harness([
+      articleRecord({ status: 2 }),
+      updateAccepted(),
+      articleRecord({ status: 2 }),
+      publicPage(404)
+    ])
+    const result = await h.call('update_article', {
+      article_id: ARTICLE_ID,
+      title: '新标题',
+      categories: '前端'
+    })
+    expect(textOf(result)).toContain('修改字段：title')
+    expect(textOf(result)).not.toContain('修改字段：title、categories')
     await h.close()
   })
 })
