@@ -123,6 +123,19 @@ jobs:
           if ! printf '%s\n' "$sample_whole" | awk "$LONG_LINE_AWK"; then
             fail "secret-scan self-test failed: the pasted-cookie length rule no longer fires"
           fi
+          # Rule 2 had no self-test, so it was free to rot into never matching.
+          # The sample is assembled at run time: a literal one in this file would
+          # itself be a committed token-shaped value, which is what the rule scans
+          # for — the fixture tripped its own rule on the first attempt.
+          sample_cookie="CSDN_COOKIE=uuid_tt_dd=$(printf 'a1b2c3d4%.0s' {1..4})"
+          if ! printf '%s\n' "$sample_cookie" | grep -qiE 'CSDN_COOKIE[[:space:]]*=[[:space:]]*"?[A-Za-z0-9%+=;_.-]{20,}'; then
+            fail "secret-scan self-test failed: the CSDN_COOKIE literal rule no longer matches a real-shaped value"
+          fi
+          # ...and it must NOT fire on code that merely assigns a parsed cookie.
+          sample_code='env.CSDN_COOKIE = m[1].trim().replace(/^["\x27]|["\x27]$/g, "")'
+          if printf '%s\n' "$sample_code" | grep -qiE 'CSDN_COOKIE[[:space:]]*=[[:space:]]*"?[A-Za-z0-9%+=;_.-]{20,}'; then
+            fail "secret-scan self-test failed: the CSDN_COOKIE rule fires on ordinary source code"
+          fi
 
           # --- 1. the .env file itself ----------------------------------------
           # `.env.local` / `.env.production` leak exactly as much as `.env`, and
@@ -133,7 +146,13 @@ jobs:
           fi
 
           # --- 2. a populated CSDN_COOKIE literal ------------------------------
-          if git grep -qiE 'CSDN_COOKIE[[:space:]]*=[[:space:]]*"?[^"[:space:]]{20,}'; then
+          # The value class is restricted to characters a real cookie value is
+          # made of, and excludes code punctuation (`[`, `(`, `/`, `\`, ...).
+          # Without that, ordinary code that assigns a parsed cookie trips the
+          # rule — `env.CSDN_COOKIE = m[1].trim()...` matched, which is how this
+          # rule was found to be over-broad. A scanner that fires on its own
+          # source gets switched off.
+          if git grep -qiE 'CSDN_COOKIE[[:space:]]*=[[:space:]]*"?[A-Za-z0-9%+=;_.-]{20,}'; then
             fail "a populated CSDN_COOKIE literal is committed"
           fi
 

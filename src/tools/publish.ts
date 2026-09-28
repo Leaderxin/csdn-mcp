@@ -28,6 +28,7 @@ import {
   DESCRIPTION_LIMIT,
   TAG_LIMIT,
   asCallToolResult,
+  categoriesDraftWarning,
   errorResult,
   jsonResult,
   type ToolResult
@@ -115,6 +116,11 @@ export async function publishArticle(ctx: ServerContext, args: PublishArgs): Pro
     }
 
     const warnings: string[] = []
+    if (mode === 'draft' && (args.categories ?? '') !== '') {
+      // The write would be discarded by CSDN, so saying "saved" without this
+      // would tell the caller something that is not true.
+      warnings.push(categoriesDraftWarning(args.categories as string))
+    }
     if (verification !== undefined && !verification.consistent) {
       warnings.push(`⚠️ 自检不一致：${verification.message}`)
     }

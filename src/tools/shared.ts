@@ -42,6 +42,27 @@ export function asCallToolResult(result: ToolResult): CallToolResult {
 }
 
 /**
+ * CSDN discards `categories` on a draft save.
+ *
+ * Measured 2026-09: sending `categories: "前端"` (a category `list_categories`
+ * really returns for this account) with `status: 2` leaves the stored value an
+ * empty string — confirmed on a create and on a later update of the same draft.
+ * The same field read back from an already-published article is populated, so the
+ * read path is fine and the field name is right (CSDN's own editor sends
+ * `categories: t.categories` in the same payload); it is the draft save that drops
+ * it, and the editor's category picker lives in the publish dialog, which fits.
+ *
+ * A draft therefore cannot hold a category, and reporting the write as done would
+ * be the same kind of lie `Description` used to tell when it was misspelled.
+ */
+export function categoriesDraftWarning(categories: string): string {
+  return (
+    '⚠️ categories 不会写入草稿：CSDN 丢弃 status=2 保存的 categories（实测新建与更新各一次，读回都是空串；' +
+    `已发布文章能正常读到分类）。「${categories}」需要在发布时携带（mode=publish），或发布后在创作中心补选。`
+  )
+}
+
+/**
  * CSDN rejects an article with more than five tags (the console UI stops at
  * five too), so the schema rejects the sixth **before** any network call.
  */

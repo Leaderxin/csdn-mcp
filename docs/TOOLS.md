@@ -117,7 +117,7 @@ Cookie 内容本身**永远不会**出现在返回值里。
 | `markdown` | string | 是 | 非空。**Markdown 源码**：会渲染成 HTML 塞进 `content`，原文同时存进 `markdowncontent` |
 | `description` | string | 否 | 摘要，**≤ 256 字**。超过 256 的部分不会上线——写入层会先截断到 256（CSDN 自己也是按 256 截断的） |
 | `tags` | string[] | 否 | **最多 5 个**。超过直接 `INVALID_ARGUMENT`（线上会把它拼成逗号连接的字符串） |
-| `categories` | string | 否 | 分类名。取 `list_categories` 的返回值 |
+| `categories` | string | 否 | 分类名。取 `list_categories` 的返回值。**草稿不保留该字段**（实测 2026-09，详见 `API-NOTES.md`）：`mode=draft` 时传了也会被 CSDN 丢弃，工具会在返回里明确告警；需要归入分类请在 `mode=publish` 时携带 |
 | `cover_image` | string | 否 | 封面图：填 `upload_image`（`kind: "cover"`）返回的 `url`；也可以直接给**本地图片路径**，这时会以 `kind: "cover"` 自动上传（`http(s)://` 开头的值不会被重复上传） |
 | `mode` | `"draft"` \| `"publish"` | 否 | 默认 `"draft"` |
 | `verify` | boolean | 否 | 默认 `true`：写入后回查 API 状态 + 公开页 |
@@ -180,7 +180,7 @@ Cookie 内容本身**永远不会**出现在返回值里。
 | `markdown` | string | 否 | 非空（传了就校验） |
 | `description` | string | 否 | ≤ 256 字 |
 | `tags` | string[] | 否 | ≤ 5 个 |
-| `categories` | string | 否 | 分类名 |
+| `categories` | string | 否 | 分类名。**草稿不保留**——见 `publish_article` 的同名字段说明 |
 | `cover_image` | string | 否 | 封面图 URL |
 | `mode` | `"draft"` \| `"publish"` | 否 | **不传则沿用文章当前的可见性**：已发布/审核中 → `publish`，其余 → `draft`（见下） |
 
