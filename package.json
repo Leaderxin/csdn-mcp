@@ -1,6 +1,6 @@
 {
   "name": "csdn-mcp",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "MCP server for CSDN — let any AI agent publish, query, edit and manage blog posts.",
   "type": "module",
   "main": "dist/index.js",

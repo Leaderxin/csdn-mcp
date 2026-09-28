@@ -45,10 +45,10 @@ Rules:
 | `src/core/logger.ts` | foundation | `createLogger`, `redact`, `Logger` |
 | `src/core/ratelimit.ts` | foundation | `RateLimiter`, `defaultSleep` |
 | `src/core/http.ts` | foundation | `CsdnHttpClient`, `unwrapEnvelope`, `parseJsonBody`, `buildQuery` |
-| `src/csdn/types.ts` | foundation | domain types, `ARTICLE_STATE_BY_CODE`, `articleStateFromCode`, `articleUrl` |
-| `src/csdn/markdown.ts` | media+markdown | `renderMarkdown`, `stripMarkdown`, `deriveDescription`, `parseFrontMatter`, `findImagePlaceholders`, `substituteImagePlaceholders` |
+| `src/csdn/types.ts` | foundation | domain types (incl. `ArticleReadType`), `ARTICLE_STATE_BY_CODE`, `articleStateFromCode`, `articleUrl` |
+| `src/csdn/markdown.ts` | media+markdown | `renderMarkdown`, `stripMarkdown`, `deriveDescription`, `parseFrontMatter`, `findLocalImageRefs`, `rewriteImageRefs`, `findImagePlaceholders`, `substituteImagePlaceholders` |
 | `src/csdn/media.ts` | media+markdown | `MediaClient`, `resolveMimeType` |
-| `src/csdn/article.ts` | article api | `ArticleClient`, `buildSaveArticleBody` |
+| `src/csdn/article.ts` | article api | `ArticleClient`, `buildSaveArticleBody`, `resolveSaveStatus`, `STATUS_LIVE`, `STATUS_NOT_LIVE`, `STATUS_PRIVATE` |
 | `src/csdn/meta.ts` | meta+verify | `MetaClient`, `BUILTIN_CATEGORIES`, `COMMON_TAGS` |
 | `src/csdn/verify.ts` | meta+verify | `verifyArticle` |
 | `src/context.ts` | foundation | `ServerContext`, `createContext` |
@@ -69,11 +69,17 @@ class ArticleClient {
 }
 ```
 
-* `save` posts to `/blog-console-api/v3/mdeditor/saveArticle`.
-  `mode: 'draft'` ⇒ `status: 2` + `pubStatus: 'draft'`.
-  `mode: 'publish'` ⇒ `status: 1` + `pubStatus: 'publish'`.
-  **Never send `status: 0`** — CSDN treats it as publish. `Description` is
+* `save` posts to `/blog-console-api/v3/mdeditor/saveArticle`. `status` means
+  "is this article live", so it is computed by
+  `resolveSaveStatus({ mode, readType, currentStatusCode })` instead of looked up
+  in a table: `0` live, `2` not live, `64` live but private. A publish sends `0`,
+  and a draft save on a live article also sends `0` — sending `2` there would take
+  a published article down. `pubStatus` is always the mode. `scheduled_time` is
+  present only when the caller asked for a schedule. `Description` is
   capitalised, ≤256 chars.
+  (`1` is what `getArticle` *reports* for a published article; no client ever
+  sends it, and reading that reply code back as a request code is what kept body
+  edits off the live page. See `API-NOTES.md`.)
 * `save` is throttled with `config.saveIntervalMs` (`rateLimitKey: 'saveArticle'`).
 * `get` reads `/blog-console-api/v1/editor/getArticle?id=` and maps `status`
   through `articleStateFromCode`.
@@ -212,8 +218,9 @@ Rules for every tool handler:
   `scripts/verify-post-smoke.mjs` re-checks a finished run afterwards and is
   read-only. Between them they may create and delete drafts, but **must never
   publish anything**. (There is no `tests/live/**`.)
-* Every test name states a behavior, not a function name. `it('sends status: 2
-  for drafts because 0 publishes the article')` — the "why" is the test.
+* Every test name states a behavior, not a function name. `it('sends 0 for a
+  draft save on a live article, so saving a draft cannot take it down')` — the
+  "why" is the test.
 
 ## 6. Commit conventions
 
@@ -225,9 +232,11 @@ assignment with a real-looking value.
 
 ## 7. Non-goals for v1.0.0
 
-* Editing the live body of an already-published article through the API. CSDN
-  only applies body edits when the editor UI publishes; the API touches the
-  draft copy. `update_article` therefore updates metadata + the draft copy and
-  says so, rather than pretending.
+* ~~Editing the live body of an already-published article through the API.~~
+  **Withdrawn in 1.0.4.** It was never a CSDN limitation: `update_article` sent
+  `status: 1`, which is the code `getArticle` *reports* for a published article,
+  whereas CSDN's own editor sends `0` to publish. The symptom was ours. Body edits
+  are now written as a live publish; whether the public page follows is pending the
+  live check in `KNOWN-ISSUES.md`. See the `status` section of `API-NOTES.md`.
 * Comment, follower or analytics APIs.
 * Any browser automation. This server is headless by design.

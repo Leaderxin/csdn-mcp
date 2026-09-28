@@ -298,16 +298,137 @@ describe('publish_article', () => {
     await h.close()
   })
 
-  it('publishes only when mode is publish, and reports the live state it verified', async () => {
+  it('publishes only when mode is publish, sending status 0 the way CSDN own editor does', async () => {
     const h = await harness([savedArticle(), articleRecord({ status: 1 }), publicPage(200)])
     const result = await h.call('publish_article', { title: '标题', markdown: MD, mode: 'publish' })
     const outgoing = saveBody(h)
-    expect(outgoing['status']).toBe(1)
+    // CSDN's editor publishes with 0. `1` is only what getArticle *reports* for a
+    // live article, and sending it was the bug this change fixes.
+    expect(outgoing['status']).toBe(0)
     expect(outgoing['pubStatus']).toBe('publish')
     const payload = jsonOf<PublishPayload>(result)
     expect(payload.state).toBe('published')
     expect(payload.verification?.consistent).toBe(true)
     expect(textOf(result)).toContain('已发布')
+    await h.close()
+  })
+
+  it('stores a private article with status 64, which is the only value CSDN accepts for one', async () => {
+    const h = await harness([savedArticle(), articleRecord({ status: 1 }), publicPage(200)])
+    const result = await h.call('publish_article', {
+      title: '标题',
+      markdown: MD,
+      mode: 'publish',
+      read_type: 'private'
+    })
+    expect(result.isError).toBeFalsy()
+    const outgoing = saveBody(h)
+    expect(outgoing['readType']).toBe('private')
+    expect(outgoing['status']).toBe(64)
+    await h.close()
+  })
+
+  it('sends readType public explicitly on a plain draft, because the field cannot be omitted', async () => {
+    const h = await harness([savedArticle(), articleRecord({ status: 2 }), publicPage(404)])
+    await h.call('publish_article', { title: '标题', markdown: MD })
+    const outgoing = saveBody(h)
+    expect(outgoing['readType']).toBe('public')
+    expect(outgoing['status']).toBe(2)
+    await h.close()
+  })
+
+  it('refuses scheduled_at without mode=publish before touching the network, because CSDN would drop it', async () => {
+    const h = await harness([savedArticle()])
+    const result = await h.call('publish_article', {
+      title: '标题',
+      markdown: MD,
+      scheduled_at: '2099-01-01T00:00:00Z'
+    })
+    expect(result.isError).toBe(true)
+    expect(textOf(result)).toContain('INVALID_ARGUMENT')
+    expect(textOf(result)).toContain('scheduled_at 需要同时传 mode=publish')
+    expect(h.fake.requests).toHaveLength(0)
+    await h.close()
+  })
+
+  it('sends scheduled_time in seconds when a publish is scheduled', async () => {
+    const h = await harness([savedArticle(), articleRecord({ status: 1 }), publicPage(200)])
+    const when = '2099-01-01T00:00:00Z'
+    const result = await h.call('publish_article', {
+      title: '标题',
+      markdown: MD,
+      mode: 'publish',
+      scheduled_at: when
+    })
+    expect(result.isError).toBeFalsy()
+    const outgoing = saveBody(h)
+    expect(outgoing['scheduled_time']).toBe(Math.floor(Date.parse(when) / 1000))
+    expect(outgoing['status']).toBe(0)
+    await h.close()
+  })
+
+  it('uploads the local images the body references through the body channel and rewrites them', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'csdn-mcp-tools-'))
+    const file = join(dir, 'body.png')
+    await writeFile(file, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+    const markdown = `# 标题\n\n![图](${file})\n\n正文内容`
+    const h = await harness([
+      signatureEnvelope('direct_blog'),
+      storeCallback(),
+      savedArticle(),
+      articleRecord({ status: 2 }),
+      publicPage(404)
+    ])
+    const result = await h.call('publish_article', { title: '标题', markdown })
+    expect(result.isError).toBeFalsy()
+
+    // Body channel, never cover: an image sent up the cover channel never shows.
+    const signature = h.fake.matching(SIGNATURE_PATH)[0]
+    expect((signature?.json as Record<string, unknown>)['appName']).toBe('direct_blog')
+    const outgoing = saveBody(h)
+    expect(outgoing['markdowncontent']).toContain(IMAGE_URL)
+    expect(outgoing['markdowncontent']).not.toContain(file)
+    expect(outgoing['content']).toContain(IMAGE_URL)
+    expect(textOf(result)).toContain('正文图片已自动上传 1 张')
+    await rm(dir, { recursive: true, force: true })
+    await h.close()
+  })
+
+  it('keeps the summary derived from the original markdown so a CDN URL can never end up in it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'csdn-mcp-tools-'))
+    const file = join(dir, 'body.png')
+    await writeFile(file, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+    const markdown = `# 标题\n\n![图](${file})`
+    const h = await harness([
+      signatureEnvelope('direct_blog'),
+      storeCallback(),
+      savedArticle(),
+      articleRecord({ status: 2 }),
+      publicPage(404)
+    ])
+    await h.call('publish_article', { title: '标题', markdown })
+
+    // `deriveDescription` drops images, so deriving it from the rewritten body
+    // would put an i-blog.csdnimg.cn URL in CSDN's Description field.
+    const outgoing = saveBody(h)
+    expect(outgoing['Description']).toBe(deriveDescription(markdown))
+    expect(String(outgoing['Description'])).not.toContain('csdnimg')
+    await rm(dir, { recursive: true, force: true })
+    await h.close()
+  })
+
+  it('leaves a local path in the body when upload_local_images is false, which is the opt-out', async () => {
+    const h = await harness([savedArticle(), articleRecord({ status: 2 }), publicPage(404)])
+    const markdown = '# 标题\n\n![图](./local/body.png)'
+    const result = await h.call('publish_article', {
+      title: '标题',
+      markdown,
+      upload_local_images: false
+    })
+    expect(result.isError).toBeFalsy()
+    expect(h.fake.matching(SIGNATURE_PATH)).toHaveLength(0)
+    expect(saveBody(h)['markdowncontent']).toBe(markdown)
+    expect(textOf(result)).not.toContain('正文图片已自动上传')
     await h.close()
   })
 

@@ -2,6 +2,24 @@
 
 本文件格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.4] - 2026-09-28
+
+### Fixed
+
+- **`status` 一直在用错的编码，这才是「改不了已发布文章正文」的真正原因。** `saveArticle` 的 `status` 是「文章在不在线上」（`0` 在线 / `2` 不在线 / `64` 在线但私密），而本仓库发的是 `1`——那是 `getArticle` **读回来**的编码（0 和 1 都是已发布），没有哪个客户端会发它。CSDN 编辑器自己的 `publish()` 就摆在那里：发布发 `0`，草稿发 `2`。
+  两个后果：一，改已发布文章的正文时线上内容不动，我们当时把这个现象记成「CSDN 接口不支持更新已发布正文」，还写进了 `ARCHITECTURE.md` 的非目标清单——**是误诊，症状是我们自己造成的**；二，草稿模式无条件发 `2`，对已发布文章调 `update_article(mode='draft')` 等于把它踢下线，编辑器的做法是发 `0` 保持在线。现在 `resolveSaveStatus()` 按 `(mode, readType, 当前状态)` 计算，两种情况都与编辑器一致。新建和「状态读不出来」都算不在线：这里猜「在线」会把调用方从没想发布的文章发出去。
+
+### Added
+
+- **正文图片自动上传并替换成 CDN 地址**：`publish_article` / `update_article` 默认扫描 Markdown 里的本地图片引用（Markdown 语法与 `<img src>` 两种都认），逐张走 `body` 通道上传后替换。绝对 URL、`data:`、`#锚点`、`IMG_xxx` 占位符都跳过；同一路径只上传一次。之前每张图都要手工调一次 `upload_image` 再手改 Markdown，这是发布流程里最重的体力活。
+- **`read_type`**（`public` / `private`）：`update_article` 不传时保持文章当前可见性，否则一次元数据修改会把私密文章变成公开。
+- **`scheduled_at`**（定时发布）：需配合 `mode=publish`，且必须是未来时间（过去的排期会被 CSDN 立刻发布）。**标注为实验特性**——CSDN 自己的读代码按秒、写代码发毫秒，两半矛盾，本仓库没有为了验证它去发一篇真实的定时文章，所以按读侧证据发秒。
+- **`list_articles` 支持 `state` / `title_contains`**：CSDN 接口没有这两个参数，所以是本地筛选，会自动多翻几页（上限 5 页）凑够匹配项，回复里明确说明筛选在本地做、`total` 是 CSDN 的总数而非命中数。
+
+### Docs
+
+- 记下两处**更正**：`use_fans_view` / `use_vip_view` 不在 `saveArticle` 请求体里（先前把它们当成接口字段是错的），以及 `ARCHITECTURE.md` 里那条已经不成立的「非目标」。
+
 ## [1.0.3] - 2026-09-28
 
 ### Fixed

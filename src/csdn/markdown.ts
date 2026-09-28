@@ -185,7 +185,75 @@ export function parseFrontMatter(markdown: string): FrontMatter {
   return { attributes, body: markdown.slice(match[0].length) }
 }
 
-/** A placeholder: `IMG_` followed by one or more word characters. */
+/**
+ * Image references that point at a local file rather than at a host.
+ *
+ * Both Markdown (`![alt](path)`) and inline HTML (`<img src="path">`) are
+ * scanned: the editor accepts either, and a relative path in either form is
+ * broken on CSDN — the reading page has no way to resolve it, so the image
+ * silently does not render.
+ */
+const MARKDOWN_IMAGE = /!\[[^\]]*\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)/g
+const HTML_IMAGE = /<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi
+
+/** Already-hosted, inline, or a placeholder the caller maps itself. */
+function isLocalReference(ref: string): boolean {
+  if (/^(?:https?:)?\/\//i.test(ref)) return false
+  if (ref.startsWith('data:')) return false
+  // `#` is an anchor and `mailto:`/`tel:` are not images; a bare `IMG_x` is the
+  // placeholder mechanism in the next section, which the caller resolves.
+  return !ref.startsWith('#') && !/^IMG_[A-Za-z0-9_]+$/.test(ref)
+}
+
+/**
+ * Every local image path the Markdown references, in order of first appearance.
+ *
+ * De-duplicated: a path used twice is uploaded once, and the same URL is written
+ * into both places.
+ */
+export function findLocalImageRefs(markdown: string): string[] {
+  const occurrences: Array<{ index: number; ref: string }> = []
+  for (const pattern of [MARKDOWN_IMAGE, HTML_IMAGE]) {
+    // A fresh regex per call would be needed if either carried `lastIndex`
+    // state; both are literals here, so `matchAll` keeps them independent.
+    for (const match of markdown.matchAll(pattern)) {
+      const ref = match[1]
+      // A capture that did not participate, an already-hosted URL, or a
+      // placeholder the caller resolves itself is not something to upload.
+      if (ref === undefined || !isLocalReference(ref)) continue
+      occurrences.push({ index: match.index, ref })
+    }
+  }
+
+  // Sorted by position, not by which regex found it: an `<img>` sitting above a
+  // `![](...)` is uploaded first, so the upload order and the summary line
+  // follow the document the author wrote.
+  occurrences.sort((left, right) => left.index - right.index)
+
+  const seen = new Set<string>()
+  const found: string[] = []
+  for (const occurrence of occurrences) {
+    if (seen.has(occurrence.ref)) continue
+    seen.add(occurrence.ref)
+    found.push(occurrence.ref)
+  }
+  return found
+}
+
+/** Replace every local path with its uploaded URL. */
+export function rewriteImageRefs(markdown: string, urls: Record<string, string>): string {
+  let result = markdown
+  for (const [ref, url] of Object.entries(urls)) {
+    // Split/join for the same reason as `substituteImagePlaceholders`: no
+    // escaping, and every occurrence rather than only the first.
+    result = result.split(ref).join(url)
+  }
+  return result
+}
+
+/**
+ * A placeholder: `IMG_` followed by one or more word characters.
+ */
 const IMAGE_PLACEHOLDER = /IMG_[A-Za-z0-9_]+/g
 
 /**

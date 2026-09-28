@@ -18,6 +18,7 @@ import {
   type ArticleDetail,
   type ArticleListPage,
   type ArticleListScope,
+  type ArticleReadType,
   type ArticleSummary,
   type DeleteArticleResult,
   type SaveArticleInput,
@@ -60,18 +61,58 @@ const DELETE_ARTICLE_PATH = '/blog/phoenix/console/v1/article/del'
 const WRITE_RATE_LIMIT_KEY = 'saveArticle'
 
 /**
- * The `status` codes `saveArticle` accepts, keyed by the caller's intent.
+ * `read_type` as the console reports it (`"public"` / `"private"`).
  *
- * 0 is deliberately not in this table. It used to be the v0 draft value, but
- * CSDN now treats `status: 0` as *publish*: the article goes public before the
- * author has seen it, and no API call can revert that — only delete and
- * recreate. Routing the mode through a table makes the dangerous value
- * unrepresentable rather than merely discouraged.
+ * Anything else — including the absent field older payloads omit — reads as
+ * `public`, which is CSDN's own default.
  */
-const SAVE_STATUS: Readonly<Record<SaveArticleInput['mode'], number>> = Object.freeze({
-  draft: 2,
-  publish: 1
-})
+function toReadType(value: unknown): ArticleReadType {
+  return asText(value) === 'private' ? 'private' : 'public'
+}
+
+/**
+ * The `status` values `saveArticle` accepts, keyed by what they mean — "is this
+ * article live", not "is this call a draft".
+ *
+ * Taken from CSDN's own editor (`publish()` in `app.chunk.*.js`):
+ *
+ *   o = "publish" === mode
+ *         ? (isPrivate ? 64 : 0)
+ *         : (isPrivate ? 64 : ("" === cur || void 0 === cur || 2 === cur ? 2 : 0))
+ *
+ * Two things a flat `draft: 2, publish: 1` table got wrong, both of which cost
+ * real behaviour:
+ *
+ * - **publishing sends 0, not 1.** `1` is what `getArticle` *reports* for a
+ *   published article; no client ever sends it. The old table read the reply
+ *   code back as if it were the request code.
+ * - **a draft save on a live article sends 0, not 2.** Sending 2 would take a
+ *   published article down, which is the opposite of "save a draft".
+ *
+ * Chosen over a fixed table because the correct value depends on the article's
+ * current state, and a lookup table cannot express that.
+ */
+export const STATUS_NOT_LIVE = 2
+export const STATUS_LIVE = 0
+/** Live, but stored private. CSDN keys this off `readType`, not off a mode. */
+export const STATUS_PRIVATE = 64
+
+export function resolveSaveStatus(input: {
+  mode: SaveArticleInput['mode']
+  readType?: ArticleReadType
+  currentStatusCode?: number
+}): number {
+  if (input.readType === 'private') return STATUS_PRIVATE
+  if (input.mode === 'publish') return STATUS_LIVE
+  // `undefined` is a new article; `STATUS_UNKNOWN_CODE` is one whose status we
+  // could not read. Both stay not-live: guessing "live" here would publish an
+  // article the caller never asked to publish.
+  return input.currentStatusCode === undefined ||
+    input.currentStatusCode === STATUS_NOT_LIVE ||
+    input.currentStatusCode === STATUS_UNKNOWN_CODE
+    ? STATUS_NOT_LIVE
+    : STATUS_LIVE
+}
 
 /**
  * Sent next to `status`. CSDN reads both, and an article whose two flags
@@ -129,8 +170,14 @@ export function buildSaveArticleBody(input: SaveArticleInput): Record<string, un
     // Tags travel as one comma-joined string, not as a JSON array.
     tags: input.tags.join(','),
     type: 'original',
-    status: SAVE_STATUS[input.mode],
+    // "Live or not", derived from the mode, the visibility and the current
+    // state — see `resolveSaveStatus`, which documents why it is not a table.
+    status: resolveSaveStatus(input),
     pubStatus: PUB_STATUS[input.mode],
+    // Lowercase (unlike `Description`). `private` is what CSDN's console calls
+    // 私密; sending `public` explicitly matches the editor, which always
+    // includes the field.
+    readType: input.readType ?? 'public',
     // 0 == 未授权转载: the article is stored as CSDN-original and the console
     // shows no 转载 badge.
     authorized_status: 0,
@@ -145,6 +192,13 @@ export function buildSaveArticleBody(input: SaveArticleInput): Record<string, un
     // `cover_type: 1` (0 means "no cover image").
     body['cover_images'] = [cover]
     body['cover_type'] = 1
+  }
+
+  if (input.scheduledTime !== undefined) {
+    // Only present when scheduling: CSDN's editor adds the key under the same
+    // condition (`i && (d.scheduled_time = t.scheduled_time)`), and a stray 0
+    // here would be read as "publish at the epoch".
+    body['scheduled_time'] = input.scheduledTime
   }
 
   return body
@@ -249,6 +303,7 @@ export class ArticleClient {
       markdownContent: asText(record['markdowncontent']),
       htmlContent: asText(record['content']),
       coverImages: asStringList(record['cover_images']),
+      readType: toReadType(record['read_type']),
       url: articleUrl(this.config.userName, id, this.config.blogBase),
       postTime: asText(record['postTime']),
       // `viewCount` is the field the current console returns; `readCount` is the

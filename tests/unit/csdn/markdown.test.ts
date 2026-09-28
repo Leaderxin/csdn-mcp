@@ -11,8 +11,10 @@ import { CsdnError } from '../../../src/core/errors.js'
 import {
   deriveDescription,
   findImagePlaceholders,
+  findLocalImageRefs,
   parseFrontMatter,
   renderMarkdown,
+  rewriteImageRefs,
   stripMarkdown,
   substituteImagePlaceholders
 } from '../../../src/csdn/markdown.js'
@@ -174,6 +176,60 @@ describe('parseFrontMatter', () => {
     const { attributes, body } = parseFrontMatter(raw)
     expect(attributes).toEqual({})
     expect(body).toBe(raw)
+  })
+})
+
+describe('findLocalImageRefs', () => {
+  it('finds Markdown and inline HTML paths in first-appearance order, de-duplicated so each file uploads once', () => {
+    const markdown = [
+      '![a](./img/a.png)',
+      '',
+      '<img src="/abs/b.png" alt="b">',
+      '',
+      '![a again](./img/a.png)',
+      '',
+      '![c](./img/c.png "标题")'
+    ].join('\n')
+    expect(findLocalImageRefs(markdown)).toEqual(['./img/a.png', '/abs/b.png', './img/c.png'])
+  })
+
+  it('tolerates padding inside a Markdown image and single quotes in an HTML one, because editors emit both', () => {
+    expect(findLocalImageRefs("![a]( ./x.png )\n<img src='./y.png'>")).toEqual(['./x.png', './y.png'])
+  })
+
+  it('skips hosted, inline and placeheld references, because uploading those is wasted bytes', () => {
+    const markdown = [
+      '![http](http://example.com/a.png)',
+      '![https](https://example.com/b.png)',
+      '![protocol relative](//cdn.example.com/c.png)',
+      '![inline](data:image/png;base64,AAAA)',
+      '![anchor](#section)',
+      '![placeholder](IMG_BODY)',
+      '<img src="IMG_COVER_1">'
+    ].join('\n')
+    expect(findLocalImageRefs(markdown)).toEqual([])
+  })
+
+  it('returns nothing for a document that has no images at all', () => {
+    expect(findLocalImageRefs('# 标题\n\n正文')).toEqual([])
+  })
+
+  it('keeps the earliest position when one file appears in both forms, so the order follows the document', () => {
+    const markdown = '<img src="./x.png">\n\n![x](./x.png)\n\n![y](./y.png)'
+    expect(findLocalImageRefs(markdown)).toEqual(['./x.png', './y.png'])
+  })
+})
+
+describe('rewriteImageRefs', () => {
+  it('replaces every occurrence of a path, because one file can be referenced more than once', () => {
+    const markdown = '![a](./x.png)\n\n<img src="./x.png">\n\n![b](./y.png)'
+    expect(
+      rewriteImageRefs(markdown, { './x.png': 'https://img/x.png', './y.png': 'https://img/y.png' })
+    ).toBe('![a](https://img/x.png)\n\n<img src="https://img/x.png">\n\n![b](https://img/y.png)')
+  })
+
+  it('leaves a document with nothing to replace untouched', () => {
+    expect(rewriteImageRefs('没有图片', {})).toBe('没有图片')
   })
 })
 

@@ -63,7 +63,29 @@ export interface SaveArticleInput {
   coverImages?: string[]
   /** Whether this call publishes or keeps a draft. */
   mode: 'draft' | 'publish'
+  /** `readType` on the wire. `'private'` makes CSDN store the article as private. */
+  readType?: ArticleReadType
+  /**
+   * The article's current status code, when the caller knows it.
+   *
+   * Needed because CSDN's `status` field means "is this article live", not
+   * "is this call a draft": a draft save on a live article must keep it live.
+   * Omit for a new article.
+   */
+  currentStatusCode?: number
+  /**
+   * Seconds since the epoch. Present only when the caller asked for a scheduled
+   * publish; CSDN then holds the article until that moment.
+   */
+  scheduledTime?: number
 }
+
+/**
+ * `readType` values CSDN's editor sends. The other visibility modes the console
+ * offers (fans-only, paid) are **not** in the `saveArticle` payload at all — see
+ * `docs/API-NOTES.md`.
+ */
+export type ArticleReadType = 'public' | 'private'
 
 /** What `saveArticle` gives back when it creates an article. */
 export interface SaveArticleResult {
@@ -87,6 +109,12 @@ export interface ArticleDetail {
   markdownContent: string
   htmlContent: string
   coverImages: string[]
+  /**
+   * `read_type` as the console reports it. Read so that an update can preserve
+   * the current visibility: sending `public` over a private article would make
+   * it public, and `saveArticle` cannot omit the field.
+   */
+  readType: ArticleReadType
   url: string
   postTime: string
   viewCount: number

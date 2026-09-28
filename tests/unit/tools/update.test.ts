@@ -9,6 +9,9 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import type { CsdnConfig } from '../../../src/core/config.js'
@@ -144,6 +147,34 @@ function updateAccepted(): ResponseScript {
 }
 
 const SIGNATURE_PATH = '/resource-api/v1/image/direct/upload/signature'
+const IMAGE_URL = 'https://i-blog.csdnimg.cn/direct/abc.png'
+
+/** Step 1: the signed upload credential the body channel hands back. */
+function signatureEnvelope(appName: string): ResponseScript {
+  return {
+    status: 200,
+    body: {
+      code: 200,
+      data: {
+        provider: 'obs',
+        accessId: 'AKIAEXAMPLE',
+        policy: 'eyJleH...oifQ==',
+        signature: 'c2lnbmF0dXJl',
+        callbackBody: '{"code":200}',
+        callbackBodyType: 'application/json',
+        callbackUrl: 'https://bizapi.csdn.net/resource-api/v1/image/direct/upload/callback',
+        filePath: 'direct/2026/09/abc.png',
+        host: 'https://csdn-img.obs.cn-north-4.myhuaweicloud.com',
+        customParam: { appName, imageSuffix: 'png' }
+      }
+    }
+  }
+}
+
+/** Step 2: the object store answers the callback, which carries the public URL. */
+function storeCallback(): ResponseScript {
+  return { status: 200, body: { code: 200, data: { imageUrl: IMAGE_URL } } }
+}
 
 const NEW_MD = '# 新正文\n\n改过的内容'
 const NEW_COVER = 'https://i-blog.csdnimg.cn/direct/new.png'
@@ -204,7 +235,7 @@ describe('update_article', () => {
     await h.close()
   })
 
-  it('warns that the live body of a published article is not updated by the API', async () => {
+  it('warns that a body edit is written as a live publish instead of promising the page changed', async () => {
     const h = await harness([
       articleRecord({ status: 1 }),
       updateAccepted(),
@@ -213,12 +244,17 @@ describe('update_article', () => {
     ])
     const result = await h.call('update_article', { article_id: ARTICLE_ID, markdown: NEW_MD })
     const text = textOf(result)
-    expect(text).toContain('不会更新已公开')
+    // The old wording — "the API never updates the live body" — described our own
+    // `status: 1` bug, not CSDN's behaviour. It is a caution now, not a verdict:
+    // the new value has not been observed against a live article yet.
+    expect(text).not.toContain('不会更新已公开')
+    expect(text).toContain('正文改动是按「线上发布」写入的')
     expect(text).toContain(`https://editor.csdn.net/md/?articleId=${ARTICLE_ID}`)
 
     const outgoing = saveBody(h)
-    // No mode given, article already public: the write must not downgrade it.
-    expect(outgoing['status']).toBe(1)
+    // No mode given, article already public: the write must not downgrade it, and
+    // it republishes with the editor's own value.
+    expect(outgoing['status']).toBe(0)
     const payload = jsonOf<UpdatePayload>(result)
     expect(payload.mode).toBe('publish')
     expect(payload.state).toBe('published')
@@ -240,12 +276,126 @@ describe('update_article', () => {
     expect(outgoing['markdowncontent']).toBe('# 老正文')
     expect(outgoing['content']).toContain('老正文')
     expect(outgoing['tags']).toBe('A,B')
-    // A reviewing article is in flight, not a draft: preserve publish.
-    expect(outgoing['status']).toBe(1)
-    expect(textOf(result)).not.toContain('不会更新已公开')
+    // A reviewing article is in flight, not a draft: the status stays live (0),
+    // which is what keeps a metadata edit from taking it down.
+    expect(outgoing['status']).toBe(0)
+    expect(textOf(result)).not.toContain('正文改动是按')
     const payload = jsonOf<UpdatePayload>(result)
     expect(payload.state).toBe('reviewing')
     expect(payload.verification.consistent).toBe(true)
+    await h.close()
+  })
+
+  it('preserves a private article readType instead of flipping it public on a metadata edit', async () => {
+    const h = await harness([
+      articleRecord({ status: 1, read_type: 'private' }),
+      updateAccepted(),
+      articleRecord({ status: 1, read_type: 'private' }),
+      publicPage(200)
+    ])
+    const result = await h.call('update_article', { article_id: ARTICLE_ID, title: '新标题' })
+    expect(result.isError).toBeFalsy()
+    const outgoing = saveBody(h)
+    // `saveArticle` cannot omit readType, so an unasked-for change here would
+    // publish a private article to everyone.
+    expect(outgoing['readType']).toBe('private')
+    expect(outgoing['status']).toBe(64)
+    await h.close()
+  })
+
+  it('applies a readType the caller did ask for, and counts it as the change', async () => {
+    const h = await harness([
+      articleRecord({ status: 2 }),
+      updateAccepted(),
+      articleRecord({ status: 2 }),
+      publicPage(404)
+    ])
+    const result = await h.call('update_article', { article_id: ARTICLE_ID, read_type: 'private' })
+    expect(result.isError).toBeFalsy()
+    const outgoing = saveBody(h)
+    expect(outgoing['readType']).toBe('private')
+    expect(outgoing['status']).toBe(64)
+    expect(textOf(result)).toContain('修改字段：read_type')
+    await h.close()
+  })
+
+  it('refuses scheduled_at unless the write is a publish, and never sends a save', async () => {
+    const h = await harness([articleRecord({ status: 2 })])
+    const result = await h.call('update_article', {
+      article_id: ARTICLE_ID,
+      markdown: NEW_MD,
+      scheduled_at: '2099-01-01T00:00:00Z'
+    })
+    expect(result.isError).toBe(true)
+    expect(textOf(result)).toContain('INVALID_ARGUMENT')
+    expect(textOf(result)).toContain('scheduled_at 需要同时传 mode=publish')
+    // The current record is read first, so the check cannot happen before that
+    // request; what matters is that nothing was written.
+    expect(h.fake.matching('saveArticle')).toHaveLength(0)
+    await h.close()
+  })
+
+  it('sends scheduled_time in seconds when a publish is scheduled', async () => {
+    const h = await harness([
+      articleRecord({ status: 2 }),
+      updateAccepted(),
+      articleRecord({ status: 1 }),
+      publicPage(200)
+    ])
+    const when = '2099-01-01T00:00:00Z'
+    const result = await h.call('update_article', {
+      article_id: ARTICLE_ID,
+      mode: 'publish',
+      scheduled_at: when
+    })
+    expect(result.isError).toBeFalsy()
+    expect(saveBody(h)['scheduled_time']).toBe(Math.floor(Date.parse(when) / 1000))
+    await h.close()
+  })
+
+  it('uploads the local images of the new body before saving, so what is stored points at the CDN', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'csdn-mcp-tools-'))
+    const file = join(dir, 'body.png')
+    await writeFile(file, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+    const markdown = `# 新正文\n\n![图](${file})`
+    const h = await harness([
+      articleRecord({ status: 2 }),
+      signatureEnvelope('direct_blog'),
+      storeCallback(),
+      updateAccepted(),
+      articleRecord({ status: 2, markdowncontent: markdown }),
+      publicPage(404)
+    ])
+    const result = await h.call('update_article', { article_id: ARTICLE_ID, markdown })
+    expect(result.isError).toBeFalsy()
+
+    const signature = h.fake.matching(SIGNATURE_PATH)[0]
+    expect((signature?.json as Record<string, unknown>)['appName']).toBe('direct_blog')
+    const outgoing = saveBody(h)
+    expect(outgoing['markdowncontent']).toContain(IMAGE_URL)
+    expect(outgoing['markdowncontent']).not.toContain(file)
+    expect(textOf(result)).toContain('正文图片已自动上传 1 张')
+    await rm(dir, { recursive: true, force: true })
+    await h.close()
+  })
+
+  it('skips the local-image pass when upload_local_images is false', async () => {
+    const markdown = '# 新正文\n\n![图](./local/body.png)'
+    const h = await harness([
+      articleRecord({ status: 2 }),
+      updateAccepted(),
+      articleRecord({ status: 2 }),
+      publicPage(404)
+    ])
+    const result = await h.call('update_article', {
+      article_id: ARTICLE_ID,
+      markdown,
+      upload_local_images: false
+    })
+    expect(result.isError).toBeFalsy()
+    expect(h.fake.matching(SIGNATURE_PATH)).toHaveLength(0)
+    expect(saveBody(h)['markdowncontent']).toBe(markdown)
+    expect(textOf(result)).not.toContain('正文图片已自动上传')
     await h.close()
   })
 

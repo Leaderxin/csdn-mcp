@@ -8,11 +8,13 @@
  *      over it". So every field is merged from the record returned by
  *      `getArticle` unless the caller supplied a new one, and the cover is
  *      re-uploaded only when a new `cover_image` was passed.
- *   2. **The body of an already-published article is not updated by the API.**
- *      CSDN only applies body edits when the editor UI publishes; the API write
- *      touches the draft copy. That is a documented non-goal of v1.0.0
- *      (docs/ARCHITECTURE.md §7), so instead of reporting a body change as live,
- *      the reply says, in its own words, that the change is not live yet.
+ *   2. **Whether the body of an already-published article goes live is decided
+ *      by the `status` we send.** CSDN's editor republishes with `status: 0`;
+ *      this server used to send `1` — the value `getArticle` *reports*, not the
+ *      one any client sends — and observed the body staying put. 1.0.4 sends 0,
+ *      which is the editor's own value, so a body edit is now written as a live
+ *      publish. That conclusion comes from CSDN's source rather than from a live
+ *      observation, so the reply carries a caution instead of a promise.
  *
  * `mode` is treated differently from `publish_article` too: when the caller
  * omits it, the article's *current* visibility is preserved instead of falling
@@ -23,10 +25,11 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { renderMarkdown } from '../csdn/markdown.js'
-import type { ArticleState } from '../csdn/types.js'
+import type { ArticleReadType, ArticleState } from '../csdn/types.js'
 import { verifyArticle } from '../csdn/verify.js'
 import type { ServerContext } from '../context.js'
 import { CsdnError } from '../core/errors.js'
+import { describeUploadedImages, uploadLocalImages } from './assets.js'
 import {
   DESCRIPTION_LIMIT,
   TAG_LIMIT,
@@ -34,9 +37,10 @@ import {
   categoriesDraftWarning,
   errorResult,
   jsonResult,
+  parseScheduledAt,
   type ToolResult
 } from './shared.js'
-import { MODE_SCHEMA } from './publish.js'
+import { MODE_SCHEMA, READ_TYPE_SCHEMA } from './publish.js'
 import { uploadCover } from './upload.js'
 
 export const UPDATE_TOOL_NAMES: readonly string[] = Object.freeze(['update_article'])
@@ -50,6 +54,9 @@ export interface UpdateArgs {
   categories?: string
   cover_image?: string
   mode?: 'draft' | 'publish'
+  read_type?: ArticleReadType
+  scheduled_at?: string
+  upload_local_images?: boolean
 }
 
 /** Every field whose absence means "keep the current value". */
@@ -60,6 +67,7 @@ const UPDATE_FIELDS = [
   'tags',
   'categories',
   'cover_image',
+  'read_type',
   'mode'
 ] as const
 
@@ -68,15 +76,30 @@ function isLive(state: ArticleState): boolean {
   return state === 'published' || state === 'reviewing'
 }
 
-/** The explicit way out of a body edit the API cannot apply. */
+/** The explicit fallback when an API-side republish does not take. */
 function editorUrl(articleId: string): string {
   return `https://editor.csdn.net/md/?articleId=${articleId}`
 }
 
-function bodyNotLiveWarning(articleId: string): string {
+/**
+ * Said when the body of an already-live article is edited.
+ *
+ * This used to be a flat verdict — "the API does not update a published body, go
+ * to the editor" — which came from watching the symptom while we sent
+ * `status: 1`. `1` is what `getArticle` *reports* for a published article; it is
+ * not what CSDN sends. CSDN's editor republishes with `status: 0`
+ * (`publish()` in app.chunk.*.js), the value this server now sends, so the old
+ * warning described our own bug rather than CSDN's behaviour.
+ *
+ * It stays a caution instead of flipping to a promise because the new value has
+ * not been observed against a live article yet — see `docs/KNOWN-ISSUES.md`.
+ * Claiming either outcome before that check would repeat the original mistake.
+ */
+function bodyLiveCaveat(articleId: string): string {
   return (
-    '⚠️ 注意：CSDN 的接口不会更新已公开（含审核中）文章的线上正文——本次 markdown 修改只写入了草稿副本，公开页面不会变化。' +
-    `要在线上生效，只能打开编辑器 UI 重新发布：${editorUrl(articleId)}`
+    '⚠️ 正文改动是按「线上发布」写入的（status=0，与 CSDN 编辑器点「发布文章」同一个值），' +
+    '所以公开页应当跟着更新，但这一点来自编辑器源码、尚未在线上实测过；' +
+    `请以公开页实际内容为准，若没变化就在编辑器里再点一次发布：${editorUrl(articleId)}`
   )
 }
 
@@ -93,6 +116,15 @@ export async function updateArticle(ctx: ServerContext, args: UpdateArgs): Promi
 
     const current = await ctx.articles.get(args.article_id)
     const mode = args.mode ?? (isLive(current.state) ? 'publish' : 'draft')
+
+    // Scheduling only means something on the publish path, and CSDN would drop
+    // it silently otherwise.
+    if (args.scheduled_at !== undefined && mode !== 'publish') {
+      throw new CsdnError(
+        'INVALID_ARGUMENT',
+        'scheduled_at 需要同时传 mode=publish：定时发布是发布动作，草稿没有可等待的时刻，CSDN 会直接忽略排期。'
+      )
+    }
 
     // Merge, never blank: see the file header. The cover comes from the current
     // record unless a new one was supplied, and a new local path goes through the
@@ -112,19 +144,34 @@ export async function updateArticle(ctx: ServerContext, args: UpdateArgs): Promi
       warnings.push('未指定 mode：文章当前已公开，本次沿用 publish，避免一次元数据修改把它退回草稿。')
     }
     if (args.markdown !== undefined && isLive(current.state)) {
-      warnings.push(bodyNotLiveWarning(current.id))
+      warnings.push(bodyLiveCaveat(current.id))
     }
+
+    // Local images go up before the save, so what is stored already points at
+    // CDN URLs. Only the caller's new Markdown is scanned: the article's stored
+    // body was rewritten on the way in and needs no second pass.
+    const materialized =
+      args.upload_local_images === false || args.markdown === undefined
+        ? { markdown: args.markdown, uploaded: {} as Record<string, string> }
+        : await uploadLocalImages(ctx, args.markdown)
 
     const saved = await ctx.articles.save({
       id: current.id,
       title: args.title ?? current.title,
-      content: renderMarkdown(args.markdown ?? current.markdownContent),
-      markdownContent: args.markdown ?? current.markdownContent,
+      content: renderMarkdown(materialized.markdown ?? current.markdownContent),
+      markdownContent: materialized.markdown ?? current.markdownContent,
       description: args.description ?? current.description,
       tags: args.tags ?? current.tags,
       categories: args.categories ?? current.categories,
       coverImages,
-      mode
+      mode,
+      // Preserved unless the caller says otherwise: overwriting this with the
+      // default would flip a private article public.
+      readType: args.read_type ?? current.readType,
+      // `status` means "is this article live" — without the current code, a
+      // draft-mode save of a published article would take it down.
+      currentStatusCode: current.statusCode,
+      ...(args.scheduled_at === undefined ? {} : { scheduledTime: parseScheduledAt(args.scheduled_at) })
     })
 
     // Unconditional on purpose: the frozen parameter table has no `verify` for
@@ -159,6 +206,8 @@ export async function updateArticle(ctx: ServerContext, args: UpdateArgs): Promi
       `已更新文章 ${saved.id}（${saved.url}）：state=${verification.state}，本次写入 mode=${mode}，修改字段：${changed}。` +
         `自检${verification.consistent ? '一致' : '不一致'}：${verification.message}`
     )
+    const imageNote = describeUploadedImages(materialized.uploaded)
+    if (imageNote !== undefined) parts.push(imageNote)
     return jsonResult(parts.join(' '), payload)
   } catch (error) {
     return errorResult(error)
@@ -190,7 +239,17 @@ export function registerUpdateTools(server: McpServer, ctx: ServerContext): void
         tags: z.array(z.string()).max(TAG_LIMIT, `tags 最多 ${TAG_LIMIT} 个`).optional(),
         categories: z.string().optional(),
         cover_image: z.string().trim().min(1, 'cover_image 不能为空').optional(),
-        mode: MODE_SCHEMA.optional()
+        mode: MODE_SCHEMA.optional(),
+        read_type: READ_TYPE_SCHEMA.optional(),
+        scheduled_at: z
+          .string()
+          .trim()
+          .min(1, 'scheduled_at 不能为空')
+          .optional()
+          .describe(
+            '定时发布时间（ISO 8601，需配合 mode=publish）。实验特性：线上单位未验证，见 docs/API-NOTES.md'
+          ),
+        upload_local_images: z.boolean().optional()
       }
     },
     async args => asCallToolResult(await updateArticle(ctx, args))
