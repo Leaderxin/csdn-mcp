@@ -150,8 +150,13 @@ export async function updateArticle(ctx: ServerContext, args: UpdateArgs): Promi
     }
 
     const parts = [...warnings]
+    // `categories` is dropped by a draft save, so counting it as a modified field
+    // would contradict the warning printed right above this sentence. Measured
+    // live: the warning and "修改字段：categories" appeared in the same reply.
+    const effective = mode === 'draft' ? provided.filter(field => field !== 'categories') : provided
+    const changed = effective.length === 0 ? '（无：本次只会用同样的内容重写一次）' : effective.join('、')
     parts.push(
-      `已更新文章 ${saved.id}（${saved.url}）：state=${verification.state}，本次写入 mode=${mode}，修改字段：${provided.join('、')}。` +
+      `已更新文章 ${saved.id}（${saved.url}）：state=${verification.state}，本次写入 mode=${mode}，修改字段：${changed}。` +
         `自检${verification.consistent ? '一致' : '不一致'}：${verification.message}`
     )
     return jsonResult(parts.join(' '), payload)
