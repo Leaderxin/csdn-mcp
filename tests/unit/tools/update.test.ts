@@ -292,4 +292,20 @@ describe('update_article', () => {
     expect(h.fake.requests).toHaveLength(1)
     await h.close()
   })
+
+  it('does not list categories as a modified field on a draft, where CSDN discards it', async () => {
+    // The reply used to say "修改字段：categories" for a write CSDN throws away.
+    const h = await harness([
+      articleRecord({ status: 2 }),
+      updateAccepted(),
+      articleRecord({ status: 2 }),
+      publicPage(404)
+    ])
+    const result = await h.call('update_article', { article_id: ARTICLE_ID, categories: '前端' })
+
+    const text = textOf(result)
+    expect(text).toContain('categories 不会写入草稿')
+    expect(text).toContain('mode=publish')
+    await h.close()
+  })
 })

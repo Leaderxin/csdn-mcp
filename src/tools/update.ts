@@ -31,6 +31,7 @@ import {
   DESCRIPTION_LIMIT,
   TAG_LIMIT,
   asCallToolResult,
+  categoriesDraftWarning,
   errorResult,
   jsonResult,
   type ToolResult
@@ -102,6 +103,11 @@ export async function updateArticle(ctx: ServerContext, args: UpdateArgs): Promi
     }
 
     const warnings: string[] = []
+    if (mode === 'draft' && args.categories !== undefined && args.categories !== '') {
+      // Listing `categories` among the modified fields would be a false claim:
+      // CSDN drops it on any status=2 save.
+      warnings.push(categoriesDraftWarning(args.categories))
+    }
     if (args.mode === undefined && mode === 'publish') {
       warnings.push('未指定 mode：文章当前已公开，本次沿用 publish，避免一次元数据修改把它退回草稿。')
     }

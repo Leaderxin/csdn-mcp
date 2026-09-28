@@ -355,4 +355,42 @@ describe('publish_article', () => {
     expect(text).toContain('10 秒')
     await h.close()
   })
+
+  it('warns instead of claiming a category was written, because CSDN drops it on a draft', async () => {
+    // Measured live 2026-09: the value goes out on the wire and reads back as an
+    // empty string on a draft, while a published article does return its
+    // category. Reporting this write as done would be the same lie a lowercase
+    // `description` used to tell.
+    const h = await harness([savedArticle(), articleRecord({ status: 2 }), publicPage(404)])
+    const result = await h.call('publish_article', { title: '标题', markdown: MD, categories: '前端' })
+
+    // Still sent: it is harmless here, and it is the same field that works on publish.
+    expect(saveBody(h)['categories']).toBe('前端')
+
+    const text = textOf(result)
+    expect(text).toContain('categories 不会写入草稿')
+    expect(text).toContain('前端')
+    expect(text).toContain('mode=publish')
+    expect(jsonOf<PublishPayload>(result).warnings?.join(' ')).toContain('categories 不会写入草稿')
+    await h.close()
+  })
+
+  it('does not warn about categories when publishing, where CSDN does persist them', async () => {
+    const h = await harness([savedArticle(), articleRecord({ status: 1 }), publicPage(200)])
+    const result = await h.call('publish_article', {
+      title: '标题',
+      markdown: MD,
+      categories: '前端',
+      mode: 'publish'
+    })
+    expect(textOf(result)).not.toContain('categories 不会写入草稿')
+    await h.close()
+  })
+
+  it('does not mention categories at all when none were requested', async () => {
+    const h = await harness([savedArticle(), articleRecord({ status: 2 }), publicPage(404)])
+    const result = await h.call('publish_article', { title: '标题', markdown: MD })
+    expect(textOf(result)).not.toContain('categories')
+    await h.close()
+  })
 })
