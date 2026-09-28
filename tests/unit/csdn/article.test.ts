@@ -13,7 +13,14 @@ import { buildConfig, type CsdnConfig } from '../../../src/core/config.js'
 import { CsdnError } from '../../../src/core/errors.js'
 import { CsdnHttpClient } from '../../../src/core/http.js'
 import { createLogger, type Logger } from '../../../src/core/logger.js'
-import { ArticleClient, buildSaveArticleBody } from '../../../src/csdn/article.js'
+import {
+  ArticleClient,
+  buildSaveArticleBody,
+  resolveSaveStatus,
+  STATUS_LIVE,
+  STATUS_NOT_LIVE,
+  STATUS_PRIVATE
+} from '../../../src/csdn/article.js'
 import { ARTICLE_STATE_BY_CODE, type SaveArticleInput } from '../../../src/csdn/types.js'
 import {
   apiErrorEnvelope,
@@ -79,18 +86,26 @@ describe('buildSaveArticleBody', () => {
     expect(body['pubStatus']).toBe('draft')
   })
 
-  it('sends status 1 and pubStatus publish for a publish request', () => {
+  it('sends status 0 for a publish request, the value CSDN sends on its own publish path', () => {
+    // `1` is only what `getArticle` *reports* for a live article; no client ever
+    // sends it. Reading the reply code back as a request value was the bug that
+    // made a publish look like it had not happened.
     const body = buildSaveArticleBody(articleInput({ mode: 'publish' }))
-    expect(body['status']).toBe(1)
+    expect(body['status']).toBe(0)
     expect(body['pubStatus']).toBe('publish')
+    expect(body['status']).not.toBe(1)
   })
 
-  it('can never produce status 0, which CSDN now treats as an immediate publish', () => {
-    const statuses = (['draft', 'publish'] as const).map(
-      mode => buildSaveArticleBody(articleInput({ mode }))['status']
+  it('always sends readType, defaulting to public, because saveArticle cannot express "leave it alone"', () => {
+    expect(buildSaveArticleBody(articleInput())['readType']).toBe('public')
+    expect(buildSaveArticleBody(articleInput({ readType: 'private' }))['readType']).toBe('private')
+  })
+
+  it('omits scheduled_time unless a schedule was asked for, because a stray 0 would publish at the epoch', () => {
+    expect(buildSaveArticleBody(articleInput())).not.toHaveProperty('scheduled_time')
+    expect(buildSaveArticleBody(articleInput({ scheduledTime: 1_790_000_000 }))['scheduled_time']).toBe(
+      1_790_000_000
     )
-    expect(statuses).toEqual([2, 1])
-    expect(statuses).not.toContain(0)
   })
 
   it('capitalises Description because CSDN silently drops a lowercase description', () => {
@@ -149,6 +164,53 @@ describe('buildSaveArticleBody', () => {
     const body = buildSaveArticleBody(articleInput({ coverImages: [''] }))
     expect(body).not.toHaveProperty('cover_images')
     expect(body).not.toHaveProperty('cover_type')
+  })
+})
+
+describe('resolveSaveStatus', () => {
+  /**
+   * CSDN's own editor derives the field with, in effect:
+   *
+   *   publish ? (private ? 64 : 0)
+   *           : (private ? 64 : ("" === cur || undefined === cur || 2 === cur ? 2 : 0))
+   *
+   * Every arm is pinned here because the two wrong answers are the two
+   * accidents this server exists to prevent: publishing what the caller asked
+   * to save, and taking down what the caller only meant to edit.
+   */
+  it('publishes with 0', () => {
+    expect(resolveSaveStatus({ mode: 'publish' })).toBe(STATUS_LIVE)
+  })
+
+  it('stores private with 64 whatever the mode says, because readType outranks the mode', () => {
+    expect(resolveSaveStatus({ mode: 'publish', readType: 'private' })).toBe(STATUS_PRIVATE)
+    expect(resolveSaveStatus({ mode: 'draft', readType: 'private' })).toBe(STATUS_PRIVATE)
+  })
+
+  it('keeps a draft a draft when the article is new or already a draft', () => {
+    expect(resolveSaveStatus({ mode: 'draft' })).toBe(STATUS_NOT_LIVE)
+    expect(resolveSaveStatus({ mode: 'draft', currentStatusCode: STATUS_NOT_LIVE })).toBe(STATUS_NOT_LIVE)
+  })
+
+  it('sends 0 for a draft save on a live article, so saving a draft cannot take it down', () => {
+    expect(resolveSaveStatus({ mode: 'draft', currentStatusCode: STATUS_LIVE })).toBe(STATUS_LIVE)
+  })
+
+  it('treats a status we could not read (-1) as not live, because guessing "live" publishes', () => {
+    expect(resolveSaveStatus({ mode: 'draft', currentStatusCode: -1 })).toBe(STATUS_NOT_LIVE)
+  })
+
+  it('reaches the same answers through the body builder, which is what CSDN actually receives', () => {
+    const statuses = (['draft', 'publish'] as const).map(
+      mode => buildSaveArticleBody(articleInput({ mode }))['status']
+    )
+    expect(statuses).toEqual([STATUS_NOT_LIVE, STATUS_LIVE])
+    expect(buildSaveArticleBody(articleInput({ mode: 'draft', currentStatusCode: 1 }))['status']).toBe(
+      STATUS_LIVE
+    )
+    expect(buildSaveArticleBody(articleInput({ mode: 'publish', readType: 'private' }))['status']).toBe(
+      STATUS_PRIVATE
+    )
   })
 })
 
@@ -315,6 +377,21 @@ describe('ArticleClient.get', () => {
       postTime: '2026-09-24 08:00:00',
       viewCount: 42
     })
+  })
+
+  it('maps read_type private, so an update can preserve it instead of flipping the article public', async () => {
+    const { client } = setup([okEnvelope({ article_id: '1042', status: 1, read_type: 'private' })])
+
+    await expect(client.get('1042')).resolves.toMatchObject({ readType: 'private' })
+  })
+
+  it('reads every other read_type value as public, because public is CSDN own default', async () => {
+    const unknown = setup([okEnvelope({ article_id: '1042', status: 1, read_type: 'fans' })])
+    await expect(unknown.client.get('1042')).resolves.toMatchObject({ readType: 'public' })
+
+    // Older payloads omit the field entirely.
+    const missing = setup([okEnvelope({ article_id: '1042', status: 1 })])
+    await expect(missing.client.get('1042')).resolves.toMatchObject({ readType: 'public' })
   })
 
   it('maps every status code in ARTICLE_STATE_BY_CODE', async () => {

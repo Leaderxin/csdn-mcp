@@ -163,6 +163,9 @@ interface ListPayload {
   total: number
   scope: string
   counts?: Record<string, number>
+  /** Present only when a local filter was applied. */
+  filteredBy?: { state?: string; title_contains?: string }
+  pagesScanned?: number
 }
 
 interface VerificationPayload {
@@ -345,6 +348,114 @@ describe('list_articles', () => {
     expect(result.isError).toBe(true)
     expect(textOf(result)).toContain('published')
     expect(h.fake.requests).toHaveLength(0)
+    await h.close()
+  })
+
+  /** One author-console row: counters quoted, as CSDN sends them. */
+  function consoleRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      articleId: '1',
+      title: '标题',
+      postTime: '2026-09-01 10:00:00',
+      viewCount: '1',
+      status: '2',
+      ...overrides
+    }
+  }
+
+  /** One author-console page, echoing the page number and the server page size. */
+  function consolePage(rows: Array<Record<string, unknown>>, page: number, size = 20): ResponseScript {
+    return { status: 200, body: { code: 200, data: { total: 100, page, size, list: rows } } }
+  }
+
+  it('keeps paging until it has a page of matches, because CSDN has no state parameter to filter with', async () => {
+    const h = await harness([
+      consolePage([consoleRow({ articleId: '1', title: '已发布的一篇', status: '1' })], 1),
+      consolePage([consoleRow({ articleId: '2', title: '草稿一篇' })], 2),
+      consolePage([], 3)
+    ])
+    const result = await h.call('list_articles', { scope: 'all', state: 'draft' })
+    const payload = jsonOf<ListPayload>(result)
+
+    expect(h.fake.requests).toHaveLength(3)
+    expect(h.fake.requests[1]?.url).toContain('page=2')
+    expect(payload.items.map(item => item.id)).toEqual(['2'])
+    expect(payload.pagesScanned).toBe(3)
+    expect(payload.filteredBy).toEqual({ state: 'draft' })
+    // `total` stays CSDN's total, and the reply has to say so: 100 next to one
+    // item otherwise reads as a bug in the filter.
+    expect(payload.total).toBe(100)
+    const text = textOf(result)
+    expect(text).toContain('筛选在本地做')
+    expect(text).toContain('下面的 total 是 CSDN 的总数')
+    expect(text).toContain('翻了 3 页')
+    await h.close()
+  })
+
+  it('stops as soon as it has a full page of matches instead of walking every page', async () => {
+    const h = await harness([consolePage([consoleRow()], 1, 1)])
+    const result = await h.call('list_articles', { scope: 'all', state: 'draft', page_size: 1 })
+    const payload = jsonOf<ListPayload>(result)
+
+    expect(h.fake.requests).toHaveLength(1)
+    expect(payload.items).toHaveLength(1)
+    expect(payload.pagesScanned).toBe(1)
+    await h.close()
+  })
+
+  it('stops on an empty page, so a filter that matches nothing never scans the whole account', async () => {
+    const h = await harness([consolePage([], 1)])
+    const result = await h.call('list_articles', { scope: 'all', state: 'draft' })
+    const payload = jsonOf<ListPayload>(result)
+
+    expect(h.fake.requests).toHaveLength(1)
+    expect(payload.items).toEqual([])
+    expect(payload.pagesScanned).toBe(1)
+    await h.close()
+  })
+
+  it('gives up after five pages, which is the cap on a filter that matches nothing', async () => {
+    const h = await harness([
+      consolePage([consoleRow({ status: '1' })], 1),
+      consolePage([consoleRow({ status: '1' })], 2),
+      consolePage([consoleRow({ status: '1' })], 3),
+      consolePage([consoleRow({ status: '1' })], 4),
+      consolePage([consoleRow({ status: '1' })], 5)
+    ])
+    const result = await h.call('list_articles', { scope: 'all', state: 'draft' })
+    const payload = jsonOf<ListPayload>(result)
+
+    expect(h.fake.requests).toHaveLength(5)
+    expect(payload.pagesScanned).toBe(5)
+    expect(payload.items).toEqual([])
+    expect(textOf(result)).toContain('翻了 5 页')
+    await h.close()
+  })
+
+  it('matches title_contains case-insensitively, because the titles mix English and Chinese', async () => {
+    const h = await harness([
+      consolePage(
+        [
+          consoleRow({ articleId: '1', title: 'MCP Server 教程' }),
+          consoleRow({ articleId: '2', title: '别的文章' })
+        ],
+        1
+      ),
+      consolePage([], 2)
+    ])
+    const result = await h.call('list_articles', { scope: 'all', title_contains: 'mcp' })
+    const payload = jsonOf<ListPayload>(result)
+
+    expect(payload.items.map(item => item.id)).toEqual(['1'])
+    expect(payload.filteredBy).toEqual({ title_contains: 'mcp' })
+    expect(payload.pagesScanned).toBe(2)
+    await h.close()
+  })
+
+  it('still makes exactly one request when no filter is given, so a plain listing pays nothing extra', async () => {
+    const h = await harness([LIST_BODY])
+    await h.call('list_articles')
+    expect(h.fake.requests).toHaveLength(1)
     await h.close()
   })
 })

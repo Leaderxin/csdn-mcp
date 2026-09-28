@@ -20,10 +20,12 @@
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
+import { CsdnError } from '../core/errors.js'
 import { deriveDescription, renderMarkdown } from '../csdn/markdown.js'
-import type { VerificationResult } from '../csdn/types.js'
+import type { ArticleReadType, VerificationResult } from '../csdn/types.js'
 import { verifyArticle } from '../csdn/verify.js'
 import type { ServerContext } from '../context.js'
+import { describeUploadedImages, uploadLocalImages } from './assets.js'
 import {
   DESCRIPTION_LIMIT,
   TAG_LIMIT,
@@ -31,6 +33,7 @@ import {
   categoriesDraftWarning,
   errorResult,
   jsonResult,
+  parseScheduledAt,
   type ToolResult
 } from './shared.js'
 import { uploadCover } from './upload.js'
@@ -46,7 +49,18 @@ export interface PublishArgs {
   cover_image?: string
   mode?: 'draft' | 'publish'
   verify?: boolean
+  read_type?: ArticleReadType
+  scheduled_at?: string
+  upload_local_images?: boolean
 }
+
+/** Shared by both write tools so the two cannot drift apart. */
+export const READ_TYPE_SCHEMA = z.enum(['public', 'private'], {
+  errorMap: () => ({
+    message:
+      'read_type 只能是 public（公开）或 private（私密）。CSDN 控制台里的「粉丝可见 / 付费」不在 saveArticle 的字段里，本工具无法设置。'
+  })
+})
 
 /**
  * The two modes, with the warning in the error itself: a caller that typos
@@ -84,6 +98,23 @@ export async function publishArticle(ctx: ServerContext, args: PublishArgs): Pro
   try {
     const mode = args.mode ?? 'draft'
 
+    // Scheduling is a publish action: CSDN's editor only ever sends
+    // `scheduled_time` on the publish path, and a draft has no moment to be held
+    // until. Rejecting loudly beats silently dropping the schedule.
+    if (args.scheduled_at !== undefined && mode !== 'publish') {
+      throw new CsdnError(
+        'INVALID_ARGUMENT',
+        'scheduled_at 需要同时传 mode=publish：定时发布是发布动作，草稿没有可等待的时刻，CSDN 会直接忽略排期。'
+      )
+    }
+
+    // Local images go up first: the Markdown that gets rendered and stored must
+    // already point at CDN URLs, or the published page shows broken images.
+    const materialized =
+      args.upload_local_images === false
+        ? { markdown: args.markdown, uploaded: {} as Record<string, string> }
+        : await uploadLocalImages(ctx, args.markdown)
+
     // A local path goes up the cover channel; an already-hosted URL is used as
     // it is. Sending a body image as a cover (or vice versa) uploads fine and
     // never shows up, which is why the channel is fixed here, not by the caller.
@@ -94,16 +125,19 @@ export async function publishArticle(ctx: ServerContext, args: PublishArgs): Pro
 
     const saved = await ctx.articles.save({
       title: args.title,
-      content: renderMarkdown(args.markdown),
-      markdownContent: args.markdown,
+      content: renderMarkdown(materialized.markdown),
+      markdownContent: materialized.markdown,
       // CSDN caps the summary at 256 characters; when the caller omits it we
       // derive one from the body instead of sending an empty string, which CSDN
       // answers by inventing its own summary from the first lines of HTML.
+      // Derived from the original so a CDN URL can never end up in the summary.
       description: args.description ?? deriveDescription(args.markdown),
       tags: args.tags ?? [],
       categories: args.categories ?? '',
       coverImages,
-      mode
+      mode,
+      readType: args.read_type,
+      ...(args.scheduled_at === undefined ? {} : { scheduledTime: parseScheduledAt(args.scheduled_at) })
     })
 
     let verification: VerificationResult | undefined
@@ -144,6 +178,8 @@ export async function publishArticle(ctx: ServerContext, args: PublishArgs): Pro
     parts.push(
       `${mode === 'draft' ? '已按草稿保存' : '已发布'}：${args.title}（article_id=${saved.id}，${saved.url}）`
     )
+    const imageNote = describeUploadedImages(materialized.uploaded)
+    if (imageNote !== undefined) parts.push(imageNote)
     if (verification === undefined) {
       parts.push('未自检（verify=false）：state 未知，需要结论请调用 verify_article。')
     } else {
@@ -162,7 +198,8 @@ export function registerPublishTools(server: McpServer, ctx: ServerContext): voi
       title: '新建文章',
       description:
         '新建一篇文章并保存到 CSDN。mode 默认 draft（存草稿）；**显式传 mode=publish 才会公开发布，且发布后接口无法退回草稿——已发布的文章只能删除重建**，所以想先审稿就保持默认。' +
-        'markdown 传源码（会渲染成 HTML 保存，原文同时保留）；tags 最多 5 个；description 省略时按正文自动生成。' +
+        'markdown 传源码（会渲染成 HTML 保存，原文同时保留）；正文里指向本地文件的图片会**自动上传到 CSDN 图床并替换成 CDN 地址**（默认开启，upload_local_images=false 可关掉）。' +
+        'tags 最多 5 个；description 省略时按正文自动生成。' +
         '不要用它更新已有文章（那会新建一篇），也不要传 mode=publish 来"试试能不能成功"——发布是不可逆的对外动作。',
       inputSchema: {
         title: z.string().trim().min(1, 'title 不能为空'),
@@ -178,7 +215,17 @@ export function registerPublishTools(server: McpServer, ctx: ServerContext): voi
         categories: z.string().optional(),
         cover_image: z.string().trim().min(1, 'cover_image 不能为空').optional(),
         mode: MODE_SCHEMA.optional(),
-        verify: z.boolean().optional()
+        verify: z.boolean().optional(),
+        read_type: READ_TYPE_SCHEMA.optional(),
+        scheduled_at: z
+          .string()
+          .trim()
+          .min(1, 'scheduled_at 不能为空')
+          .optional()
+          .describe(
+            '定时发布时间（ISO 8601，需配合 mode=publish）。实验特性：线上单位未验证，见 docs/API-NOTES.md'
+          ),
+        upload_local_images: z.boolean().optional()
       }
     },
     async args => asCallToolResult(await publishArticle(ctx, args))

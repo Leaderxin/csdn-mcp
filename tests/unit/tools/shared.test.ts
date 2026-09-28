@@ -14,7 +14,8 @@ import {
   TAG_LIMIT,
   asCallToolResult,
   errorResult,
-  jsonResult
+  jsonResult,
+  parseScheduledAt
 } from '../../../src/tools/shared.js'
 
 const ALL_CODES: CsdnErrorCode[] = [
@@ -39,6 +40,17 @@ const NOT_AN_ERROR = { toString: () => 'not an Error at all' }
 
 function textOf(result: { content: Array<{ type: 'text'; text: string }> }): string {
   return result.content.map(block => block.text).join('\n')
+}
+
+/** Run `fn`, returning the CsdnError it threw (so tests can assert on `code`). */
+function captureCsdnError(fn: () => unknown): CsdnError {
+  try {
+    fn()
+  } catch (error) {
+    if (error instanceof CsdnError) return error
+    throw error
+  }
+  throw new Error('expected a CsdnError, but nothing was thrown')
 }
 
 describe('jsonResult', () => {
@@ -142,6 +154,34 @@ describe('errorResult', () => {
   it('stringifies a thrown value that is not an Error at all', () => {
     const text = textOf(errorResult(NOT_AN_ERROR))
     expect(text).toContain('not an Error at all')
+  })
+})
+
+describe('parseScheduledAt', () => {
+  const NOW = Date.parse('2026-09-28T00:00:00Z')
+
+  it('returns seconds, because seconds is the unit CSDN reads a schedule back in', () => {
+    const when = '2026-10-01T09:00:00+08:00'
+    expect(parseScheduledAt(when, NOW)).toBe(Math.floor(Date.parse(when) / 1000))
+  })
+
+  it('refuses a value it cannot parse instead of scheduling something arbitrary', () => {
+    for (const value of ['下周三', 'not-a-date', '']) {
+      const error = captureCsdnError(() => parseScheduledAt(value, NOW))
+      expect(error.code).toBe('INVALID_ARGUMENT')
+      expect(error.message).toContain('ISO 8601')
+    }
+  })
+
+  it('refuses a moment that has passed or is exactly now, because CSDN publishes a past schedule immediately', () => {
+    // The failure this guards against: a unit mistake lands in the past, and the
+    // accidental publish is exactly what this server exists to prevent.
+    expect(captureCsdnError(() => parseScheduledAt('2026-09-27T00:00:00Z', NOW)).message).toContain(
+      '必须晚于当前时间'
+    )
+    expect(captureCsdnError(() => parseScheduledAt(new Date(NOW).toISOString(), NOW)).message).toContain(
+      '必须晚于当前时间'
+    )
   })
 })
 

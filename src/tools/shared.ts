@@ -20,7 +20,7 @@
 
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 
-import { isCsdnError, type CsdnErrorCode } from '../core/errors.js'
+import { CsdnError, isCsdnError, type CsdnErrorCode } from '../core/errors.js'
 import { redact } from '../core/logger.js'
 
 export interface ToolResult {
@@ -39,6 +39,39 @@ export interface ToolResult {
  */
 export function asCallToolResult(result: ToolResult): CallToolResult {
   return { content: result.content, isError: result.isError }
+}
+
+/**
+ * Parse `scheduled_at` (ISO 8601) into the value `saveArticle` takes.
+ *
+ * **The wire unit is inferred, not measured.** CSDN's editor multiplies the
+ * field by 1000 when it *reads* an article back
+ * (`scheduled_time: 1e3 * e.data.scheduled_time`), so the API speaks seconds —
+ * but its write path forwards the editor's local millisecond value unchanged.
+ * The two halves disagree and no live scheduled publish has been run to settle
+ * it, so `docs/API-NOTES.md` labels this experimental.
+ *
+ * A past timestamp is refused because that is the failure mode which actually
+ * hurts: a unit error in the "seconds where milliseconds are expected" direction
+ * lands in the past, and CSDN would publish immediately — the accidental publish
+ * this server exists to prevent. The guard cannot detect a wrong unit; it just
+ * keeps the caller's clearly-stated intent from being silently inverted.
+ */
+export function parseScheduledAt(value: string, now: number = Date.now()): number {
+  const parsed = Date.parse(value)
+  if (Number.isNaN(parsed)) {
+    throw new CsdnError(
+      'INVALID_ARGUMENT',
+      `scheduled_at 不是可识别的时间：${value}（请用 ISO 8601，如 2026-10-01T09:00:00+08:00）`
+    )
+  }
+  if (parsed <= now) {
+    throw new CsdnError(
+      'INVALID_ARGUMENT',
+      `scheduled_at 必须晚于当前时间：${value}。CSDN 对过去的排期会立刻发布，所以这里直接拒绝。`
+    )
+  }
+  return Math.floor(parsed / 1000)
 }
 
 /**

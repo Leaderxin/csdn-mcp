@@ -240,6 +240,36 @@ const REJECTIONS: Rejection[] = [
     name: 'list_articles',
     args: { page_size: 101 },
     message: 'page_size 最大 100'
+  },
+  {
+    label: 'read_type 不是 public/private',
+    name: 'publish_article',
+    args: { title: 't', markdown: '# x', read_type: 'fans' },
+    message: 'read_type 只能是 public'
+  },
+  {
+    label: 'read_type 不是 public/private',
+    name: 'update_article',
+    args: { article_id: ARTICLE_ID, read_type: 'fans' },
+    message: 'read_type 只能是 public'
+  },
+  {
+    label: '空 scheduled_at',
+    name: 'publish_article',
+    args: { title: 't', markdown: '# x', mode: 'publish', scheduled_at: '   ' },
+    message: 'scheduled_at 不能为空'
+  },
+  {
+    label: 'state 不是已知状态',
+    name: 'list_articles',
+    args: { scope: 'all', state: 'archived' },
+    message: 'state 只能是 draft'
+  },
+  {
+    label: '空白 title_contains',
+    name: 'list_articles',
+    args: { scope: 'all', title_contains: '   ' },
+    message: 'title_contains 不能为空字符串'
   }
 ]
 

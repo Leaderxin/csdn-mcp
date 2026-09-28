@@ -34,6 +34,9 @@ function makeDetail(overrides: Partial<ArticleDetail> = {}): ArticleDetail {
     markdownContent: '',
     htmlContent: '',
     coverImages: [],
+    // Required, and `public` is what CSDN reports for an article saved without
+    // an explicit `read_type`.
+    readType: 'public',
     url: articleUrl(USER, ARTICLE_ID),
     postTime: '',
     viewCount: 0,

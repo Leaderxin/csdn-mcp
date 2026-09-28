@@ -14,7 +14,7 @@
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
-import type { ArticleListPage, ArticleListScope } from '../csdn/types.js'
+import type { ArticleListPage, ArticleListScope, ArticleState, ArticleSummary } from '../csdn/types.js'
 import { verifyArticle } from '../csdn/verify.js'
 import type { ServerContext } from '../context.js'
 import { asCallToolResult, errorResult, jsonResult, type ToolResult } from './shared.js'
@@ -59,16 +59,70 @@ export async function getArticle(
   }
 }
 
+/**
+ * How many CSDN pages the local filter walks before giving up.
+ *
+ * CSDN's author-console list ignores `size` and returns a server-fixed page, and
+ * it has no state or keyword parameters, so filtering has to happen here. The
+ * cap keeps a filter that matches nothing from paging through the whole account.
+ */
+const FILTER_SCAN_LIMIT = 5
+
+export interface ListFilters {
+  state?: ArticleState
+  title_contains?: string
+}
+
+function matchesFilters(item: ArticleSummary, filters: ListFilters): boolean {
+  if (filters.state !== undefined && item.state !== filters.state) return false
+  const needle = filters.title_contains
+  if (needle === undefined) return true
+  // Case-insensitive: the titles are Chinese and English mixed, and a
+  // case-sensitive match on the English half surprises people.
+  return item.title.toLowerCase().includes(needle.toLowerCase())
+}
+
 export async function listArticles(
   ctx: ServerContext,
-  args: { page?: number; page_size?: number; scope?: ArticleListScope }
+  args: {
+    page?: number
+    page_size?: number
+    scope?: ArticleListScope
+    state?: ArticleState
+    title_contains?: string
+  }
 ): Promise<ToolResult> {
   try {
-    const page: ArticleListPage = await ctx.articles.list({
+    const filters: ListFilters = { state: args.state, title_contains: args.title_contains }
+    const filtering = filters.state !== undefined || filters.title_contains !== undefined
+
+    let page: ArticleListPage = await ctx.articles.list({
       page: args.page,
       pageSize: args.page_size,
       scope: args.scope
     })
+    let pagesScanned = 1
+    const matches = page.items.filter(item => matchesFilters(item, filters))
+
+    // Only when a filter is active: a plain listing must stay a single request,
+    // both for the caller's latency and because CSDN rate-limits the console.
+    while (
+      filtering &&
+      matches.length < page.pageSize &&
+      page.items.length > 0 &&
+      pagesScanned < FILTER_SCAN_LIMIT
+    ) {
+      page = await ctx.articles.list({
+        page: page.page + 1,
+        pageSize: args.page_size,
+        scope: args.scope
+      })
+      pagesScanned += 1
+      matches.push(...page.items.filter(item => matchesFilters(item, filters)))
+    }
+
+    const items = filtering ? matches.slice(0, page.pageSize) : page.items
+
     // The two scopes see different sets, so the message must say which one
     // answered. An agent that asked for drafts and reads "只含已发布文章" would
     // conclude its draft is missing when it simply asked the wrong endpoint.
@@ -83,11 +137,17 @@ export async function listArticles(
         : `；CSDN 分类计数 ${Object.entries(page.counts)
             .map(([key, value]) => `${key}=${value}`)
             .join(', ')}`
+    // Said out loud because `total` is CSDN's, not the filtered count: without
+    // this a caller reads "共 27 篇" next to 2 items and assumes a bug.
+    const filterNote = filtering
+      ? `；**筛选在本地做**（CSDN 接口没有状态/关键词参数），翻了 ${pagesScanned} 页共 ${matches.length} 篇命中，` +
+        `下面的 total 是 CSDN 的总数、不是命中数`
+      : ''
 
     return jsonResult(
-      `已列出第 ${page.page} 页（每页 ${page.pageSize}）：本页 ${page.items.length} 篇，共 ${page.total} 篇；` +
-        `${scopeNote}${countsNote}`,
-      page
+      `已列出第 ${page.page} 页（每页 ${page.pageSize}）：本页 ${items.length} 篇，共 ${page.total} 篇；` +
+        `${scopeNote}${countsNote}${filterNote}`,
+      { ...page, items, ...(filtering ? { filteredBy: filters, pagesScanned } : {}) }
     )
   } catch (error) {
     return errorResult(error)
@@ -152,6 +212,7 @@ export function registerReadTools(server: McpServer, ctx: ServerContext): void {
         'scope="all" 走作者后台接口、需要 Cookie，**包含草稿**，并在 counts 里给出 draft/publish 等分类计数——' +
         '这是唯一能回答「我有哪些草稿」的口径（公开接口看不到草稿，get_article 又要先知道 id）。' +
         '注意后台接口的每页条数由 CSDN 服务端固定，page_size 传入后可能被忽略，返回的 pageSize 是实际值。' +
+        'state / title_contains 是**本地筛选**（CSDN 接口没有这两个参数）：会自动多翻几页凑够匹配项（最多 5 页），返回的 total 仍是 CSDN 的总数。' +
         '不要用它判断某篇文章是否发布成功——看不到不等于没发布，请用 verify_article。',
       inputSchema: {
         page: z.number().int().min(1, 'page 从 1 开始').optional(),
@@ -162,7 +223,18 @@ export function registerReadTools(server: McpServer, ctx: ServerContext): void {
               message: 'scope 只能是 published（公开接口，只看已发布）或 all（作者后台，含草稿）'
             })
           })
+          .optional(),
+        state: z
+          .enum(['draft', 'published', 'reviewing', 'rejected', 'unknown'], {
+            errorMap: () => ({ message: 'state 只能是 draft / published / reviewing / rejected / unknown' })
+          })
+          .optional(),
+        title_contains: z
+          .string()
+          .trim()
+          .min(1, 'title_contains 不能为空字符串')
           .optional()
+          .describe('标题包含的关键词（不区分大小写），本地筛选')
       }
     },
     async args => asCallToolResult(await listArticles(ctx, args))

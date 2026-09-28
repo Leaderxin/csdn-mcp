@@ -121,6 +121,9 @@ Cookie 内容本身**永远不会**出现在返回值里。
 | `cover_image` | string | 否 | 封面图：填 `upload_image`（`kind: "cover"`）返回的 `url`；也可以直接给**本地图片路径**，这时会以 `kind: "cover"` 自动上传（`http(s)://` 开头的值不会被重复上传） |
 | `mode` | `"draft"` \| `"publish"` | 否 | 默认 `"draft"` |
 | `verify` | boolean | 否 | 默认 `true`：写入后回查 API 状态 + 公开页 |
+| `read_type` | `"public"` \| `"private"` | 否 | 默认 `"public"`。私密文章在写请求里的 `status` 是 64（仍然"在线上"、只是对外不可读），与草稿不是一回事。粉丝可见/付费**不在这个接口里**，见 `API-NOTES.md` |
+| `scheduled_at` | string | 否 | 定时发布时间（ISO 8601，如 `2026-10-01T09:00:00+08:00`），**必须同时传 `mode=publish`**。**实验特性**：CSDN 自己的读写代码对单位（秒/毫秒）说法不一致，本工具按"秒"发送但未线上验证；填过去的时间会被直接拒绝（过去的排期会立刻发布） |
+| `upload_local_images` | boolean | 否 | 默认 `true`：把正文里指向本地文件的图片自动上传到 CSDN 图床（`body` 通道）并替换成 CDN 地址 |
 
 **成功返回**
 
@@ -183,6 +186,9 @@ Cookie 内容本身**永远不会**出现在返回值里。
 | `categories` | string | 否 | 分类名。**草稿不保留**——见 `publish_article` 的同名字段说明 |
 | `cover_image` | string | 否 | 封面图 URL |
 | `mode` | `"draft"` \| `"publish"` | 否 | **不传则沿用文章当前的可见性**：已发布/审核中 → `publish`，其余 → `draft`（见下） |
+| `read_type` | `"public"` \| `"private"` | 否 | **不传则保持文章当前的可见性**（`getArticle` 的 `read_type`）。这一项必须保持，否则一次元数据修改会把私密文章变成公开 |
+| `scheduled_at` | string | 否 | 同 `publish_article`，需配合 `mode=publish`。**实验特性** |
+| `upload_local_images` | boolean | 否 | 默认 `true`，只扫描本次传入的 `markdown` |
 
 至少要传一个要修改的字段，只传 `article_id` 会直接 `INVALID_ARGUMENT`（`saveArticle` 是整条重写，什么都没改的重写只会白冒一次写风险）。
 
@@ -284,6 +290,8 @@ Cookie 内容本身**永远不会**出现在返回值里。
 | `page` | number | 否 | 页码，从 1 开始，默认 `1` |
 | `page_size` | number | 否 | 每页条数，默认 `20`，**上限 `100`**。`scope=all` 时可能被服务端忽略，见下 |
 | `scope` | string | 否 | `published`（默认）或 `all` |
+| `state` | string | 否 | `draft` / `published` / `reviewing` / `rejected` / `unknown`，**本地筛选** |
+| `title_contains` | string | 否 | 标题关键词（不区分大小写），**本地筛选** |
 
 越界（`page < 1`、`page_size > 100`，或 `scope` 不是这两个值）在发请求之前就被 `INVALID_ARGUMENT` 拦下。
 
