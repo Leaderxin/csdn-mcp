@@ -130,7 +130,7 @@ Agent → verify_article({ "article_id": "149234567", "expected": "publish" })
 | [docs/FAQ.md](docs/FAQ.md)                         | 常见问题与能力边界                         |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md)             | 版本变更                                   |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)       | 分层、模块边界、冻结的工具面               |
-| [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md)       | v0.1.0 基线问题清单                        |
+| [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md)       | 已修项复核、历史问题回归表、待线上验证     |
 
 ## 许可
 
