@@ -67,9 +67,9 @@ Agent → publish_article({
 ← { "articleId": "149234567",
     "url": "https://blog.csdn.net/Leaderxin/article/details/149234567",
     "state": "draft",
-    "verification": { "state": "draft", "statusCode": 2,
+    "verification": { "articleId": "149234567", "state": "draft", "statusCode": 2,
                       "publicStatusCode": 404, "consistent": true,
-                      "message": "草稿状态与公开页一致（公开页 404）" } }
+                      "message": "草稿已确认：接口 status=2，公开页 404" } }
 
 Agent → verify_article({ "article_id": "149234567", "expected": "draft" })
 ← { "articleId": "149234567", "state": "draft", "statusCode": 2,
@@ -115,19 +115,7 @@ Agent → verify_article({ "article_id": "149234567", "expected": "publish" })
 
 **两步图片上传。** 先 POST `/resource-api/v1/image/direct/upload/signature` 拿上传凭据，再 multipart 直传到返回的存储 host，响应里的 `data.imageUrl` 才是公网地址。正文图和封面图是两条不同的通道（`appName` 不同），不可互换。见 [docs/TOOLS.md](docs/TOOLS.md#upload_image)。
 
-**为什么每次写入都要回查公开页。** `saveArticle` 返回 200 不等于成功——v0 用 `status: 0` 表示草稿，CSDN 却把它当发布处理，用户拿到 200 的同时文章已经公开可见。所以 `publish_article` / `update_article` 默认跑一次校验：既看 API 返回的 `status`，也真的去请求一次公开页，只有两边都说"是草稿"（公开页 404）或都说"已发布"（公开页 200）才判定 `consistent: true`。任何一边不一致都会如实报告，不会因为一个 200 就宣称"发布成功"。
-
-## v0.1.0 到 v1.0.0 修了什么
-
-- **草稿状态码写反**：v0 用 `status: 0` 当草稿，实际会被直接发布，且无法回退。v1 草稿是 `status: 2` + `pubStatus: 'draft'`，发布是 `status: 1`。
-- **摘要字段大小写错误**：v0 传小写 `description`，CSDN 只认大写 `Description`，摘要被静默丢弃。v1 传 `Description`，并且前置校验 ≤256 字。
-- **发完不自检**：v1 每次写入都回查 `getArticle.status` 与公开页 HTTP 码。
-- **图片上传走已下线域名**：`imgservice.csdn.net` 全 404，v1 改走 `resource-api/v1/image/direct/upload/signature` 两步上传。
-- **入参不校验**：v1 在发请求之前拦住 `tags` > 5、`description` > 256 字、空 `markdown`、非法 `kind`。
-- **工具面缺失**：从 4 个工具（其中 2 个接口已失效）补齐到 11 个，新增查询、编辑、删除、图片、状态校验能力。
-- **频控 / 重试 / 超时**：内置客户端节流（写操作默认间隔 11s）与可重试错误的指数退避，网络抖动不再直接失败。
-- **错误不可读**：v0 全部返回 `code: -1` + 字符串；v1 改为命名错误码（`AUTH_INVALID`、`RATE_LIMITED`、`VERIFY_FAILED` 等）+ 可重试标记。
-- **Cookie 可能进日志**：v1 日志统一脱敏，且只写 stderr——stdout 属于 MCP 协议流。
+**为什么每次写入都要回查公开页。** `saveArticle` 返回 200 不等于成功。接口里的 `status` 表达的是"这篇文章是否对外可见"，不是"这次调用算不算草稿"——两者共用同一组数字编码（`0` / `1` 已发布，`2` 草稿，`6` 审核拒绝，`16` 审核中），写入用的值和 `getArticle` 报回来的值含义并不对称（发布时发的是 `0`，`getArticle` 报的是 `1`）。所以 `publish_article` / `update_article` 默认跑一次校验：既看 API 返回的 `status`，也真的去请求一次公开页，只有两边都说"是草稿"（公开页 404）或都说"已发布"（公开页 200）才判定 `consistent: true`。任何一边不一致都会如实报告，不会因为一个 200 就宣称"发布成功"。
 
 ## 文档
 
@@ -142,11 +130,8 @@ Agent → verify_article({ "article_id": "149234567", "expected": "publish" })
 | [docs/FAQ.md](docs/FAQ.md)                         | 常见问题与能力边界                         |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md)             | 版本变更                                   |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)       | 分层、模块边界、冻结的工具面               |
-| [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md)       | v0.1.0 基线问题清单                        |
+| [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md)       | 已修项复核、历史问题回归表、待线上验证     |
 
 ## 许可
 
 MIT，见 [LICENSE](LICENSE)。
-
-本项目派生自 [mcp-csdn-publisher](https://github.com/Ln129402/mcp-csdn-publisher)，上游版权声明按 MIT 的要求保留在 [NOTICE](NOTICE)。
-（`LICENSE` 里只放本项目自己的标准 MIT 全文——掺进派生说明会让 GitHub 的许可证识别器匹配不上，仓库侧栏会显示成 `Other`。）
