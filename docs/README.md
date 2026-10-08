@@ -26,7 +26,6 @@
 | [ARCHITECTURE.md](ARCHITECTURE.md) | v1.0.0 冻结契约：分层、模块归属、接口签名、工具面、测试与提交规范、非目标 |
 | [KNOWN-ISSUES.md](KNOWN-ISSUES.md) | v0.1.0 基线的问题清单（重构的需求输入），每条都是实测复现过的 |
 | [CHANGELOG.md](CHANGELOG.md) | Keep a Changelog 格式的版本变更：1.0.0 的 Added / Changed / Fixed / Breaking 与 0.1.0 基线 |
-| [LEGACY-README.md](LEGACY-README.md) | v0.1.0 的原 README，保留用于对照旧工具名与旧用法 |
 
 ## 相关文件（仓库根目录）
 
